@@ -55,7 +55,7 @@ export default function App() {
           {view === 'home' && <HomeScreen />}
           {view === 'progress' && <Progress />}
           {view === 'history' && <HistoryScreen />}
-          {view === 'practice' && <Practice />}
+          {view === 'practice' && user.calibrated && <Practice />}
           {view === 'onboarding' && <Onboarding />}
           {view === 'session' && <SessionRunner />}
         </main>
@@ -97,7 +97,7 @@ function Nav() {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/90 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-stretch justify-around px-4">
-        {CANDIDATE_NAV.map(({ view: v, label, icon: Icon }) => (
+        {CANDIDATE_NAV.filter((item) => user.calibrated || item.view !== 'practice').map(({ view: v, label, icon: Icon }) => (
           <button
             key={v}
             type="button"

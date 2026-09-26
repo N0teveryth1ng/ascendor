@@ -213,10 +213,8 @@ export function Onboarding() {
               Get started
               <ArrowRight />
             </Button>
-            <Button variant="ghost" className="w-full" onClick={() => go('home')}>
-              Skip for now
-            </Button>
-          </CardContent>
+            {/* Calibration lock: "Skip for now" is not rendered until calibration is complete */}
+          {/* The onboarding flow must be completed before access is granted. */}
         </Card>
       </div>
     );
