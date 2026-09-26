@@ -209,7 +209,8 @@ export function Onboarding() {
                 </li>
               ))}
             </ol>
-            <Button size="lg" className="w-full" onClick={() => setPhase('pass')}>
+          </CardContent>
+          <Button size="lg" className="w-full" onClick={() => setPhase('pass')}>
               Get started
               <ArrowRight />
             </Button>

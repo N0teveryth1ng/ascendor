@@ -93,11 +93,11 @@ function Header({ onSignOut }: { onSignOut: () => void }) {
 }
 
 function Nav() {
-  const { view, go } = useForge();
+  const { user, view, go } = useForge();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/90 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-stretch justify-around px-4">
-        {CANDIDATE_NAV.filter((item) => user.calibrated || item.view !== 'practice').map(({ view: v, label, icon: Icon }) => (
+        {CANDIDATE_NAV.filter((item) => user?.calibrated || item.view !== 'practice').map(({ view: v, label, icon: Icon }) => (
           <button
             key={v}
             type="button"

@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Lock } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useForge } from '@/store/useForge';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 
 export function Practice() {
   const { user, go } = useForge();
@@ -18,7 +16,7 @@ export function Practice() {
     return <div className="mx-auto max-w-3xl space-y-3 p-6">{[0, 1, 2].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-card" />)}</div>;
   }
 
-  if (!user.calibrated) {
+  if (!user?.calibrated) {
     go('onboarding');
     return null;
   }
@@ -33,7 +31,7 @@ export function Practice() {
       <Button
         size="lg"
         onClick={() => go('home')}
-        disabled={!user.calibrated}
+        disabled={!user?.calibrated}
       >
         Start Today’s Routine
         <ArrowRight />
