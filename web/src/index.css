@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Section 13.1 — product surfaces, not a terminal. */
+    --background: 240 6% 5%;
+    --foreground: 240 5% 95%;
+
+    --card: 240 5% 9%;
+    --card-foreground: 240 5% 95%;
+
+    --popover: 240 5% 8%;
+    --popover-foreground: 240 5% 95%;
+
+    /* Cold blue, single accent for primary actions and progress. */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4% 14%;
+    --secondary-foreground: 240 5% 95%;
+
+    --muted: 240 4% 13%;
+    --muted-foreground: 240 4% 62%;
+
+    --accent: 240 4% 16%;
+    --accent-foreground: 240 5% 95%;
+
+    /* Calm, not alarm-red. */
+    --destructive: 0 63% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 55% 46%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 78% 55%;
+    --warning-foreground: 0 0% 12%;
+
+    --border: 240 4% 17%;
+    --input: 240 4% 20%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Numbers stay aligned and legible without reading as terminal cosplay. */
+  .tabular {
+    @apply tabular-nums font-medium;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

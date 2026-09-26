@@ -1,0 +1,259 @@
+export const SCHEMA = `
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS candidates (
+  candidate_id  TEXT PRIMARY KEY,
+  display_name  TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+
+-- Section 1.3: Personalized Calibration Profile. Locked on write.
+CREATE TABLE IF NOT EXISTS pcp (
+  candidate_id                 TEXT PRIMARY KEY REFERENCES candidates(candidate_id),
+  calibration_date             TEXT NOT NULL,
+  vocabulary_band              TEXT NOT NULL,
+  syntax_ceiling               TEXT NOT NULL,
+  baseline_reflex_latency_ms   REAL NOT NULL,
+  baseline_vocal_clarity       REAL NOT NULL,
+  typo_vulnerability_index     REAL NOT NULL,
+  flagged_weak_vectors         TEXT NOT NULL,
+  entry_rank                   TEXT NOT NULL,
+  phase_1_entry_difficulty_seed TEXT NOT NULL,
+  vectors                      TEXT NOT NULL,
+  locked                       INTEGER NOT NULL DEFAULT 1
+);
+
+-- Raw calibration passes, retained so the PCP is auditable.
+CREATE TABLE IF NOT EXISTS calibration_passes (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id     TEXT NOT NULL REFERENCES candidates(candidate_id),
+  vector           TEXT NOT NULL,
+  pass_type        TEXT NOT NULL,
+  started_at       TEXT NOT NULL,
+  completed_at     TEXT NOT NULL,
+  accuracy_pct     REAL NOT NULL,
+  mean_latency_ms  REAL NOT NULL,
+  threshold_ms     REAL NOT NULL,
+  wpm              INTEGER,
+  details          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cal_passes ON calibration_passes(candidate_id, vector);
+
+CREATE TABLE IF NOT EXISTS metrics (
+  candidate_id                 TEXT PRIMARY KEY REFERENCES candidates(candidate_id),
+  precision_index              REAL NOT NULL DEFAULT 0,
+  reflex_latency_pct_of_baseline REAL NOT NULL DEFAULT 0,
+  retention_density            REAL NOT NULL DEFAULT 0,
+  vocal_clarity_delta          REAL NOT NULL DEFAULT 0,
+  pattern_intuition            REAL NOT NULL DEFAULT 0,
+  provenance                   TEXT NOT NULL DEFAULT '{}',
+  updated_at                   TEXT NOT NULL
+);
+
+-- Section 8: baseline stats are immutable downward. Floors are the
+-- calibration-demonstrated values; the only sanctioned downward path is
+-- sustained multi-session degradation, clamped here.
+CREATE TABLE IF NOT EXISTS metric_floors (
+  candidate_id                 TEXT PRIMARY KEY REFERENCES candidates(candidate_id),
+  floors                       TEXT NOT NULL,
+  capability_baseline          TEXT NOT NULL,
+  updated_at                   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id        TEXT PRIMARY KEY,
+  candidate_id      TEXT NOT NULL REFERENCES candidates(candidate_id),
+  module_id         TEXT NOT NULL,
+  phase             INTEGER NOT NULL,
+  block_id          TEXT,
+  sublevel          INTEGER NOT NULL,
+  started_at        TEXT NOT NULL,
+  ended_at          TEXT NOT NULL,
+  accuracy_pct      REAL NOT NULL,
+  mean_latency_ms   REAL NOT NULL,
+  threshold_ms      REAL NOT NULL,
+  speed_multiplier  REAL NOT NULL,
+  char_correct      INTEGER NOT NULL DEFAULT 0,
+  char_total        INTEGER NOT NULL DEFAULT 0,
+  errors            TEXT NOT NULL DEFAULT '[]',
+  ape               TEXT NOT NULL DEFAULT '{}',
+  is_delayed_recall INTEGER NOT NULL DEFAULT 0,
+  recall_of_session TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_cand ON sessions(candidate_id, module_id, started_at);
+
+CREATE TABLE IF NOT EXISTS session_attempts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT NOT NULL REFERENCES sessions(session_id),
+  candidate_id    TEXT NOT NULL,
+  module_id       TEXT NOT NULL,
+  item_id         TEXT NOT NULL,
+  item_kind       TEXT NOT NULL,
+  position        INTEGER NOT NULL,
+  correct         INTEGER NOT NULL,
+  input           TEXT,
+  expected        TEXT,
+  latency_ms      REAL NOT NULL,
+  error_code      TEXT NOT NULL,
+  error_category  TEXT,
+  char_position   INTEGER,
+  latency_delta_ms REAL,
+  counted_chars   INTEGER NOT NULL DEFAULT 0,
+  correct_chars   INTEGER NOT NULL DEFAULT 0,
+  slot_category   TEXT,
+  delayed_recall  INTEGER NOT NULL DEFAULT 0,
+  clarity_score   REAL
+);
+CREATE INDEX IF NOT EXISTS idx_attempts_session ON session_attempts(session_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_tag ON session_attempts(candidate_id, error_category);
+
+-- Item payloads retained so a scene can be re-presented >=24h later for RD.
+CREATE TABLE IF NOT EXISTS session_items (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT NOT NULL REFERENCES sessions(session_id),
+  candidate_id TEXT NOT NULL,
+  module_id    TEXT NOT NULL,
+  item_id      TEXT NOT NULL,
+  payload      TEXT NOT NULL,
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_items_cand ON session_items(candidate_id, module_id, created_at);
+
+CREATE TABLE IF NOT EXISTS rolling_windows (
+  candidate_id         TEXT NOT NULL REFERENCES candidates(candidate_id),
+  module_id            TEXT NOT NULL,
+  window               TEXT NOT NULL,
+  updated_at           TEXT NOT NULL,
+  PRIMARY KEY (candidate_id, module_id)
+);
+
+-- Section 11: persistent per-error-tag counters, scoped per module per
+-- candidate. Load-bearing for the whole adaptive system.
+CREATE TABLE IF NOT EXISTS error_counters (
+  candidate_id     TEXT NOT NULL REFERENCES candidates(candidate_id),
+  module_id        TEXT NOT NULL,
+  tag              TEXT NOT NULL,
+  sessions_flagged INTEGER NOT NULL DEFAULT 0,
+  updated_at       TEXT NOT NULL,
+  PRIMARY KEY (candidate_id, module_id, tag)
+);
+
+CREATE TABLE IF NOT EXISTS structural_locks (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id        TEXT NOT NULL REFERENCES candidates(candidate_id),
+  module_id           TEXT NOT NULL,
+  tag                 TEXT NOT NULL,
+  sessions_flagged    INTEGER NOT NULL,
+  remediation_active  INTEGER NOT NULL DEFAULT 1,
+  triggered_at        TEXT NOT NULL,
+  cleared_at          TEXT,
+  sessions_remaining  INTEGER NOT NULL DEFAULT 3,
+  diversion_pct       REAL NOT NULL DEFAULT 15,
+  blocks_escalation   INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_locks_cand ON structural_locks(candidate_id, remediation_active);
+
+CREATE TABLE IF NOT EXISTS streaks (
+  candidate_id TEXT PRIMARY KEY REFERENCES candidates(candidate_id),
+  current      INTEGER NOT NULL DEFAULT 0,
+  multiplier   REAL NOT NULL DEFAULT 1.0,
+  last_date    TEXT,
+  best         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS daily_log (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id       TEXT NOT NULL REFERENCES candidates(candidate_id),
+  date               TEXT NOT NULL,
+  aggregate_pct      REAL NOT NULL,
+  tier               TEXT NOT NULL,
+  streak_before      INTEGER NOT NULL,
+  streak_after       INTEGER NOT NULL,
+  multiplier_after   REAL NOT NULL,
+  modules_failed     TEXT NOT NULL DEFAULT '[]',
+  forced_repeat      INTEGER NOT NULL DEFAULT 0,
+  baseline_stats_cut INTEGER NOT NULL DEFAULT 0,
+  lockout_applied    INTEGER NOT NULL DEFAULT 0,
+  recorded_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_cand ON daily_log(candidate_id, date);
+
+CREATE TABLE IF NOT EXISTS rank_history (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
+  rank         TEXT NOT NULL,
+  at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pending_remediation (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id    TEXT NOT NULL REFERENCES candidates(candidate_id),
+  module_id       TEXT NOT NULL,
+  scheduled_at    TEXT NOT NULL,
+  source_session  TEXT,
+  reason          TEXT NOT NULL,
+  completed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_cand ON pending_remediation(candidate_id, completed_at);
+
+CREATE TABLE IF NOT EXISTS metric_history (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
+  metrics      TEXT NOT NULL,
+  at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mhist_cand ON metric_history(candidate_id, at);
+
+-- ── Section 13.3: auth & profiles ──────────────────────────────────────────
+-- A candidate user's id IS their candidate_id, so the entire calibration/APE/
+-- metrics engine above is reused verbatim with no key remapping. An admin has
+-- no candidates row and therefore no track of their own.
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  display_name  TEXT NOT NULL,
+  avatar        TEXT,
+  role          TEXT NOT NULL DEFAULT 'candidate',
+  timezone      TEXT NOT NULL DEFAULT 'UTC',
+  created_at    TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(lower(email));
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON auth_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON auth_sessions(expires_at);
+
+-- ── Section 13.4: permanent per-attempt record ─────────────────────────────
+-- session_attempts above is the engine's working table. This is the
+-- append-only archive the dashboards and the teacher read from; nothing is ever
+-- updated or deleted here. hidden_metrics_delta records which of PI/RL/RD/VC/PTI
+-- the attempt fed and by how much.
+CREATE TABLE IF NOT EXISTS exercise_attempts (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id             TEXT NOT NULL,
+  module_id           TEXT NOT NULL,
+  exercise_id         TEXT NOT NULL,
+  question_shown      TEXT NOT NULL,
+  answer_given        TEXT,
+  correct_answer      TEXT,
+  is_correct          INTEGER NOT NULL,
+  response_time_ms    REAL NOT NULL,
+  error_tag           TEXT,
+  hidden_metrics_delta TEXT NOT NULL DEFAULT '{}',
+  session_id          TEXT,
+  position            INTEGER,
+  created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ex_attempts_user ON exercise_attempts(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ex_attempts_module ON exercise_attempts(user_id, module_id);
+CREATE INDEX IF NOT EXISTS idx_ex_attempts_tag ON exercise_attempts(user_id, error_tag);
+CREATE INDEX IF NOT EXISTS idx_ex_attempts_session ON exercise_attempts(session_id);
+`;
