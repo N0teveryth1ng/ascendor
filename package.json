@@ -15,9 +15,10 @@
     "build": "npm run build --workspace web",
     "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace web && npm run typecheck:api",
     "typecheck:api": "tsc -p api/tsconfig.json",
+    "test": "npm run test --workspace server",
     "audit:promises": "node scripts/audit-floating-promises.mjs",
     "smoke": "npm run smoke --workspace server",
-    "verify": "npm run typecheck && npm run audit:promises && npm run build",
+    "verify": "npm run typecheck && npm run test && npm run audit:promises && npm run build",
     "start": "npm run start --workspace server"
   },
   "devDependencies": {
