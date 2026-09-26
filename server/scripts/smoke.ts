@@ -18,6 +18,9 @@ for (const suffix of ['', '-wal', '-shm']) {
   }
 }
 process.env.FORGE_DB_PATH = dbPath;
+// The suite drives the seeded demo tracks (billi/anik), so opt in explicitly
+// rather than relying on the default being on.
+process.env.SEED_DEMO = '1';
 
 const { buildSession } = await import('../src/content/index.js');
 const { processSessionResult, applyDailyTier } = await import('../src/service/sessionService.js');

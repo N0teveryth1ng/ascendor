@@ -2,16 +2,10 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useForge } from '@/store/useForge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
-const DEMO = [
-  { label: 'Billi', email: 'billi@forge.local', password: 'billi-demo-2024' },
-  { label: 'Anik', email: 'anik@forge.local', password: 'anik-demo-2024' },
-  { label: 'Teacher', email: 'teacher@forge.local', password: 'teacher-demo-2024' },
-];
 
 export function AuthScreen() {
   const { signIn, signUp } = useForge();
@@ -133,29 +127,6 @@ export function AuthScreen() {
               {error && <p className="text-sm text-destructive">{error}</p>}
             </CardContent>
           </Tabs>
-        </Card>
-
-        <Card className="bg-secondary/40">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Demo accounts</CardTitle>
-            <CardDescription className="text-xs">Tap one to fill the form.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {DEMO.map((d) => (
-              <button
-                key={d.email}
-                type="button"
-                className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-left transition-colors hover:bg-accent"
-                onClick={() => {
-                  setEmail(d.email);
-                  setPassword(d.password);
-                }}
-              >
-                <span className="text-sm font-medium">{d.label}</span>
-                <span className="text-xs text-muted-foreground">{d.email}</span>
-              </button>
-            ))}
-          </CardContent>
         </Card>
       </div>
     </div>

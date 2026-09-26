@@ -30,6 +30,7 @@ export default defineConfig({
       env: {
         PORT: String(API_PORT),
         FORGE_DB_PATH: resolve(here, 'e2e/.tmp/onboarding-ui.db'),
+        // The suite signs up its own fresh accounts, so demo seeding stays off.
       },
     },
     {
