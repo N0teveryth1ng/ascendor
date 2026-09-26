@@ -9,7 +9,8 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { gradeAnswer, toAttempt } from '../lib/grading';
-import { openMic, rateForWpm, recordFor, speak, type MicCapture } from '../lib/audio';
+import { openMic, recordFor, speak, type MicCapture } from '../lib/audio';
+import { itemView } from '../lib/itemView';
 import { feedback, focusLine, moduleLabel, rankLabel } from '../lib/copy';
 import type { Attempt, DrillItem, SessionPlan, SessionResult } from '../types';
 
@@ -20,9 +21,6 @@ interface ItemFeedback {
   tone: 'success' | 'error' | 'warning';
   correct: boolean;
 }
-
-const VOICE_KINDS = new Set(['stream', 'aural', 'vocal', 'burst']);
-const TIMED_KINDS = new Set(['scene', 'microtext', 'recall']);
 
 export function SessionRunner() {
   const { user, pendingModule, go, setResult, setFault, refreshDashboard } = useForge();
@@ -43,7 +41,7 @@ export function SessionRunner() {
   const planLoadedAt = useRef(0);
   const deadlineRef = useRef<number | null>(null);
 
-  const needsVoice = !!item && VOICE_KINDS.has(item.kind);
+  const needsVoice = !!item && itemView(item).voice;
   const finished = !!plan && index >= plan.items.length;
 
   useEffect(() => {
@@ -74,19 +72,19 @@ export function SessionRunner() {
       if (deadlineRef.current !== null) window.clearTimeout(deadlineRef.current);
       deadlineRef.current = null;
 
-      if (next.kind === 'stream' || next.kind === 'aural') {
-        void speak(next.text, { rate: rateForWpm(next.wpm, activePlan.speed_multiplier) });
-      } else if (next.kind === 'vocal' || next.kind === 'burst') {
-        void speak(next.text, { rate: activePlan.speed_multiplier });
-      }
+        const view = itemView(next);
+        if (view.speech) {
+          void speak(view.speech.text, { rate: view.speech.wpm ?? activePlan.speed_multiplier });
+        }
 
-      if (TIMED_KINDS.has(next.kind)) {
-        const window_ms =
-          next.kind === 'scene' ? next.flash_duration_ms : (activePlan.params.display_ms ?? activePlan.params.flash_duration_ms ?? 4000);
-        deadlineRef.current = window.setTimeout(() => {
-          void commit(null, true);
-        }, window_ms);
-      }
+        // Items the candidate reads or recalls are held to a window, and a
+        // missed window commits a null answer so the attempt is scored as a miss
+        // rather than silently dropped.
+        if (view.inputless || view.timed) {
+          deadlineRef.current = window.setTimeout(() => {
+            void commit(null, true);
+          }, view.durationMs);
+        }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [plan, index],
@@ -131,7 +129,7 @@ export function SessionRunner() {
       setLocked(true);
       const latency = timedOut ? item.threshold_ms * 10 : performance.now() - presentedAt.current;
 
-      if (item.kind === 'vocal' && mic) {
+        if (itemView(item).voice && mic) {
         await recordFor(mic.stream, Math.min(4000, Math.max(700, latency)));
       }
 
@@ -264,7 +262,7 @@ export function SessionRunner() {
                 setSpeechOk(false);
                 return;
               }
-              await speak(item!.kind === 'scene' || item!.kind === 'recall' ? (item!.kind === 'scene' ? item!.title : 'Recall the earlier scene') : (item! as { text: string }).text);
+                await speak(itemView(item!).speech?.text ?? itemView(item!).body);
             }}
             onSubmit={() => void commit(input.trim() || null)}
           />
@@ -376,44 +374,26 @@ function Question({
 }
 
 function Prompt({ item, speechOk, onSpeech }: { item: DrillItem; speechOk: boolean; onSpeech: () => Promise<void> }) {
-  const body = useMemo(() => {
-    switch (item.kind) {
-      case 'pattern':
-        return { lead: 'Which one fits this pattern?', text: `${item.pair[0]} / ${item.pair[1]}` };
-      case 'syntax':
-        return { lead: 'Build the sentence', text: item.scaffold };
-      case 'microtext':
-        return { lead: 'Read it, then type what you remember', text: item.text, timed: true };
-      case 'stream':
-      case 'aural':
-        return { lead: 'Listen and type what you hear', text: item.text, speak: true };
-      case 'swap':
-        return { lead: 'Type the two words you see', text: `${item.pair[0]} / ${item.pair[1]}`, timed: true };
-      case 'anomaly':
-        return { lead: 'Which one does not belong?', text: item.tokens.join(' · '), timed: true };
-      case 'vocal':
-      case 'burst':
-        return { lead: 'Read it aloud, then type it back', text: item.text, speak: true };
-      case 'scene':
-        return { lead: `Memorise this scene (${Math.round(item.flash_duration_ms / 1000)}s)`, text: item.title, timed: true, hidden: true };
-      case 'recall':
-        return { lead: 'Recall the scene from earlier', text: `${item.slots.length} details`, timed: true, hidden: true };
-      default:
-        return { lead: 'Your turn', text: '' };
-    }
-  }, [item]);
+  const view = useMemo(() => itemView(item), [item]);
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">{body.lead}</p>
-      <div className="rounded-lg bg-secondary/50 p-4">
-        {body.hidden ? (
-          <p className="tabular text-sm text-muted-foreground">The scene is hidden until time is up.</p>
+      <p className="text-sm text-muted-foreground">{view.prompt}</p>
+      <div className="whitespace-pre-wrap rounded-lg bg-secondary/50 p-4">
+        {view.inputless ? (
+          <p className="tabular text-sm text-muted-foreground">
+            {item.kind === 'scene' ? 'The scene is hidden until time is up.' : view.prompt}
+          </p>
         ) : (
-          <p className="text-lg leading-relaxed">{body.text}</p>
+          <p className="text-lg leading-relaxed">
+            {view.body}
+            {view.detail && (
+              <span className="mt-2 block text-base text-muted-foreground">{view.detail}</span>
+            )}
+          </p>
         )}
       </div>
-      {body.speak && speechOk && (
+      {view.speech && speechOk && (
         <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => void onSpeech()}>
           <Volume2 className="h-3.5 w-3.5" /> Play again
         </Button>
@@ -422,30 +402,39 @@ function Prompt({ item, speechOk, onSpeech }: { item: DrillItem; speechOk: boole
   );
 }
 
+/**
+ * The record of what was actually shown, sent with the submitted attempts so the
+ * server can recompute grading without re-deriving the prompt from the item.
+ * It previously reported `aural`/`swap`/`anomaly`/`recall` kinds the engine
+ * never emits and silently fell through to `{ kind: 'unknown' }`, so every
+ * dictation and pressure attempt reached history with no prompt at all.
+ */
 function promptPayload(item: DrillItem): unknown {
   switch (item.kind) {
     case 'pattern':
       return { kind: 'pattern', item_id: item.item_id, prompt: `Which fits: ${item.pair[0]} / ${item.pair[1]}`, pair: item.pair };
     case 'syntax':
       return { kind: 'syntax', item_id: item.item_id, prompt: item.scaffold, scaffold: item.scaffold, level: item.level };
+    case 'slot':
+      return { kind: 'slot', item_id: item.item_id, prompt: item.swapped_condition, frame_a: item.frame_a, slot_category: item.slot_category };
     case 'microtext':
-      return { kind: 'microtext', item_id: item.item_id, prompt: item.text, text: item.text };
-    case 'stream':
-    case 'aural':
-      return { kind: item.kind, item_id: item.item_id, prompt: item.text, text: item.text, wpm: item.wpm };
-    case 'swap':
-      return { kind: 'swap', item_id: item.item_id, prompt: `${item.pair[0]} / ${item.pair[1]}`, pair: item.pair };
-    case 'anomaly':
-      return { kind: 'anomaly', item_id: item.item_id, prompt: item.tokens.join(' '), tokens: item.tokens, level: item.level };
-    case 'vocal':
+      return { kind: 'microtext', item_id: item.item_id, prompt: item.sentences.join(' '), blank_index: item.blank_index, options: item.options };
     case 'burst':
-      return { kind: item.kind, item_id: item.item_id, prompt: item.text, text: item.text };
+      return { kind: 'burst', item_id: item.item_id, prompt: item.group_label, token: item.token, repetitions: item.repetitions };
+    case 'stream':
+      return { kind: 'stream', item_id: item.item_id, prompt: item.tokens.join(' '), tokens: item.tokens, wpm: item.wpm, anomaly_token: item.anomaly_token };
+    case 'dictation':
+      return { kind: 'dictation', item_id: item.item_id, prompt: 'Audio dictation', char_count: item.text.length, trap_category: item.trap_category };
+    case 'read_aloud':
+      return { kind: 'read_aloud', item_id: item.item_id, prompt: item.title, passage_id: item.passage_id, hesitation_targets: item.hesitation_targets };
     case 'scene':
-      return { kind: 'scene', item_id: item.item_id, prompt: item.title, scene_id: item.title, slots: item.slots };
-    case 'recall':
-      return { kind: 'recall', item_id: item.item_id, prompt: `Recall ${item.slots.length} details`, slots: item.slots };
-    default:
-      return { kind: 'unknown' };
+      return { kind: 'scene', item_id: item.item_id, prompt: item.title, scene_id: item.scene_id, slots: item.slots, slot_count: item.slot_count };
+    case 'pressure':
+      return { kind: 'pressure', item_id: item.item_id, prompt: item.visual_cue, wpm: item.wpm, response_window_ms: item.response_window_ms, window_reduction_pct: item.window_reduction_pct };
+    default: {
+      const exhaustive: never = item;
+      throw new Error(`unhandled drill item kind: ${JSON.stringify(exhaustive)}`);
+    }
   }
 }
 

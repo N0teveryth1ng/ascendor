@@ -1,4 +1,5 @@
 import type { Attempt, DrillItem, ErrorEvent, ErrorTagCode } from '../types';
+import { itemAnswer } from './itemView';
 
 /**
  * Client-side grading mirrors the server taxonomy so feedback is instant, but
@@ -131,13 +132,21 @@ export function gradeAnswer(
   };
 }
 
+/**
+ * The answer key for an item.
+ *
+ * This delegates to `itemAnswer` so the graded answer and the rendered prompt
+ * are resolved from one place. It previously fell through to `''` for kinds it
+ * did not recognise, and because the client's union had drifted from the
+ * server's, `dictation` and `pressure` fell into that path: their expected
+ * answer resolved to the empty string, every typed answer then compared unequal,
+ * and both modules scored 0% with a PATTERN_MISMATCH on every attempt. That fed
+ * real structural locks and a queue of phantom remediation into the database.
+ * `itemAnswer` is exhaustive and throws on an unknown kind, so the next
+ * divergence is a build or runtime failure rather than a silent zero.
+ */
 function expectedOf(item: DrillItem): string {
-  if ('expected' in item && typeof item.expected === 'string') return item.expected;
-  if (item.kind === 'recall' || item.kind === 'scene') return '';
-  if (item.kind === 'stream' || item.kind === 'aural' || item.kind === 'microtext') return item.text;
-  if (item.kind === 'anomaly') return item.corrected;
-  if (item.kind === 'vocal' || item.kind === 'burst') return item.text;
-  return '';
+  return itemAnswer(item);
 }
 
 export function toAttempt(

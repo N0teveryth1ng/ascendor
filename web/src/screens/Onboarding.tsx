@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { gradeAnswer, toAttempt } from '../lib/grading';
-import { openMic, rateForWpm, recordFor, speak, type MicCapture } from '../lib/audio';
+import { openMic, recordFor, speak, type MicCapture } from '../lib/audio';
+import { itemView } from '../lib/itemView';
 import type { Attempt, CalibrationPass, DrillItem, Onboarding } from '@/types';
 
 /**
@@ -50,6 +51,7 @@ export function Onboarding() {
   const [micLive, setMicLive] = useState(false);
 
   const item = items[index] ?? null;
+  const view = useMemo(() => (item ? itemView(item) : null), [item]);
   const vector: Vector = VECTORS[stepIndex] ?? 'C1';
   const step = guide?.steps[stepIndex] ?? null;
   const timed = passType === 'timed';
@@ -112,7 +114,7 @@ export function Onboarding() {
   useEffect(() => {
     if (!item || !running) return;
     presentedAt.current = performance.now();
-    if (item.kind === 'stream' || item.kind === 'aural') void speak(item.text, { rate: rateForWpm(item.wpm) });
+      if (view?.speech) void speak(view.speech.text, { rate: view.speech.wpm });
     setInput('');
   }, [item, running]);
 
@@ -120,7 +122,7 @@ export function Onboarding() {
     async (text: string | null) => {
       if (!item) return;
       const latency = performance.now() - presentedAt.current;
-      if (item.kind === 'vocal' && mic) {
+        if (view?.voice && mic) {
         await recordFor(mic.stream, Math.min(4000, Math.max(700, latency)));
       }
       // The first pass scores content only so it measures comfort, not speed.
@@ -249,8 +251,8 @@ export function Onboarding() {
     );
   }
 
-  if (running && item) {
-    const options = 'options' in item && Array.isArray(item.options) ? (item.options as string[]) : null;
+    if (running && item && view) {
+      const options = view.options ?? null;
     return (
       <div className="mx-auto max-w-xl space-y-4 p-6">
         <div className="space-y-2">
@@ -273,26 +275,25 @@ export function Onboarding() {
         <Card>
           <CardContent className="space-y-5 p-6">
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">{timed ? 'Type what you hear.' : step?.prompt}</p>
-              <div className="rounded-lg bg-secondary/50 p-4 text-lg leading-relaxed">
-                {item.kind === 'pattern' && `${item.pair[0]} / ${item.pair[1]}`}
-                {item.kind === 'slot' && (
-                  <>
-                    <span className="block text-base text-muted-foreground">{item.frame_a}</span>
-                    <span className="mt-1 block font-medium">{item.swapped_condition}</span>
-                  </>
-                )}
-                {item.kind === 'syntax' && item.scaffold}
-                {(item.kind === 'microtext' || item.kind === 'stream' || item.kind === 'aural') && item.text}
-                {(item.kind === 'vocal' || item.kind === 'burst') && item.text}
-                {item.kind === 'anomaly' && item.tokens.join(' · ')}
-                {item.kind === 'swap' && `${item.pair[0]} / ${item.pair[1]}`}
-                {(item.kind === 'stream' || item.kind === 'aural') && (
-                  <Button variant="ghost" size="sm" className="ml-2 gap-1.5 text-xs" onClick={() => void speak(item.text, { rate: rateForWpm(item.wpm) })}>
-                    <Volume2 className="h-3 w-3" /> Play
-                  </Button>
-                )}
-              </div>
+                <p className="text-sm text-muted-foreground">{timed ? view.prompt : step?.prompt ?? view.prompt}</p>
+                <div className="whitespace-pre-wrap rounded-lg bg-secondary/50 p-4 text-lg leading-relaxed">
+                  {view.body}
+                  {view.detail && (
+                    <span className="mt-2 block text-base font-normal text-muted-foreground">
+                      {view.detail}
+                    </span>
+                  )}
+                  {view.speech && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2 ml-2 gap-1.5 text-xs"
+                      onClick={() => void speak(view.speech!.text, { rate: view.speech!.wpm })}
+                    >
+                      <Volume2 className="h-3 w-3" /> Play
+                    </Button>
+                  )}
+                </div>
             </div>
 
             {options ? (
@@ -309,27 +310,41 @@ export function Onboarding() {
                   </Button>
                 ))}
               </div>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void submit(input.trim() || null);
-                }}
-                className="flex gap-2"
-              >
-                <Input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  autoFocus
-                  className="text-base"
-                  placeholder="Type your answer"
-                  aria-label="Your answer"
-                />
-                <Button type="submit" size="lg" disabled={!input.trim()}>
-                  Check
-                </Button>
-              </form>
-            )}
+              ) : view.inputless ? (
+                <div className="space-y-3">
+                  {view.voice ? (
+                    mic ? (
+                      <Button size="lg" className="w-full gap-2" onClick={() => void submit(null)}>
+                        <Mic className="h-4 w-4" /> Done reading
+                      </Button>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Microphone unavailable - this item was not scored.
+                      </p>
+                    )
+                  ) : null}
+                </div>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void submit(input.trim() || null);
+                  }}
+                  className="flex gap-2"
+                >
+                  <Input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    autoFocus
+                    className="text-base"
+                    placeholder="Type your answer"
+                    aria-label="Your answer"
+                  />
+                  <Button type="submit" size="lg" disabled={!input.trim()}>
+                    Check
+                  </Button>
+                </form>
+              )}
           </CardContent>
         </Card>
 

@@ -169,12 +169,65 @@ export interface RankEvaluation {
 
 /* ── Drill items ──────────────────────────────────────────────────────────── */
 
-interface ItemBase {
+  /**
+   * The error taxonomy from `ERROR_CATEGORIES` in `server/src/core/errorTags.ts`.
+   * Declared here so the `DrillItem` mirror below can type `category`, and so a
+   * category added on the server without a client counterpart is a build error.
+   */
+  export const ERROR_CATEGORIES = {
+    TENSE_MARKER: 'tense_marker',
+    VOICE: 'voice_agreement',
+    THIRD_PERSON_S: 'third_person_s',
+    ARTICLE: 'article_agreement',
+    PLURAL: 'plural_agreement',
+    PREPOSITION: 'preposition_selection',
+    HOMOPHONE_THEIR_THERE: 'homophone_their_there',
+    HOMOPHONE_THERE_THEYRE: 'homophone_there_theyre',
+    HOMOPHONE_YOUR_YOURE: 'homophone_your_youre',
+    HOMOPHONE_TO_TOO_TWO: 'homophone_to_too_two',
+    HOMOPHONE_THEIR_THEYRE: 'homophone_their_theyre',
+    LEXICAL: 'lexical_selection',
+    PAST_PERFECT: 'past_perfect_construction',
+    CONDITIONAL: 'conditional_construction',
+    RELATIVE_CLAUSE: 'relative_clause',
+    PASSIVE_VOICE: 'passive_voice',
+    SLOT_IF: 'slot_if_condition',
+    SLOT_THEN: 'slot_then_consequence',
+    SLOT_VAR_A: 'slot_var_a',
+    SLOT_VAR_B: 'slot_var_b',
+    ANOMALY: 'anomaly_detection',
+    SEQUENCE_ORDER: 'sequence_ordering',
+    SCENE_ACTION: 'scene_action_binding',
+    SCENE_OBJECT: 'scene_object_binding',
+    SCENE_COUNT: 'scene_enumeration',
+    PHONEME_SUBSTITUTION: 'phoneme_substitution',
+    CONSONANT_CLUSTER: 'consonant_clusters_str_thr',
+    CLARITY: 'clarity_deficit',
+    SPELLING: 'spelling_error',
+    HESITATION: 'hesitation_onset',
+  } as const;
+  
+  export type ErrorCategory = (typeof ERROR_CATEGORIES)[keyof typeof ERROR_CATEGORIES];
+  
+  interface ItemBase {
   item_id: string;
   threshold_ms: number;
   remediation: boolean;
 }
 
+/**
+ * The drill item shape, mirroring `DrillItem` in `server/src/content/index.ts`.
+ *
+ * This was previously a separate hand-written union that had drifted: the server
+ * emits `read_aloud`, `dictation` and `pressure`, none of which existed here,
+ * and this file invented `swap`, `anomaly`, `aural` and `recall`, which the
+ * server never emits. The grading code below is exhaustive over this union, so
+ * a kind added on one side and not the other is now a compile error rather than
+ * a silent zero score.
+ *
+ * Keep in lockstep with the server union. `expectedOf` in `lib/grading.ts`
+ * resolves the answer key and is the only place the client learns it.
+ */
 export type DrillItem =
   | (ItemBase & {
       kind: 'pattern';
@@ -184,6 +237,7 @@ export type DrillItem =
       options: string[];
       expected: string;
       distractor: string;
+      category: ErrorCategory;
       mode: 'pattern';
     })
   | (ItemBase & {
@@ -193,6 +247,7 @@ export type DrillItem =
       scaffold: string;
       options: string[];
       expected: string;
+      category: ErrorCategory;
       mode: 'pattern';
     })
   | (ItemBase & {
@@ -201,33 +256,48 @@ export type DrillItem =
       flash_duration_ms: number;
       slot_count: number;
       slots: { slot: number; expected: string; distractors: string[] }[];
+      category: ErrorCategory;
+      mode: 'pattern';
+      delayed_recall: boolean;
+      scene_id: string;
+    })
+  | (ItemBase & {
+      kind: 'burst';
+      group: string;
+      group_label: string;
+      token: string;
+      repetitions: number;
+      category: ErrorCategory;
+      mode: 'pattern';
+    })
+  | (ItemBase & {
+      kind: 'read_aloud';
+      passage_id: string;
+      title: string;
+      text: string;
+      hesitation_targets: string[];
+      category: ErrorCategory;
+      mode: 'pattern';
+    })
+  | (ItemBase & {
+      kind: 'dictation';
+      text: string;
+      trap_category: ErrorCategory | null;
+      mode: 'typo' | 'pattern';
+      category: ErrorCategory;
     })
   | (ItemBase & {
       kind: 'microtext';
-      level: string;
-      text: string;
-      mode: 'pattern' | 'dictation' | 'meaning';
+      title: string;
+      sentences: string[];
+      display_ms: number;
+      steps: { index: number; text: string; node: string }[];
+      blank_index: number;
+      options: string[];
+      expected: string;
+      category: ErrorCategory;
+      mode: 'pattern';
     })
-  | (ItemBase & { kind: 'stream'; text: string; wpm: number; mode: 'stream' })
-  | (ItemBase & { kind: 'swap'; pair: [string, string]; interval_ms: number; mode: 'swap' })
-  | (ItemBase & {
-      kind: 'anomaly';
-      level: string;
-      tokens: string[];
-      anomaly_index: number;
-      anomaly_token: string;
-      corrected: string;
-      note: string;
-    })
-  | (ItemBase & { kind: 'aural'; text: string; wpm: number; mode: 'aural' })
-  | (ItemBase & {
-      kind: 'vocal';
-      passage_id: string;
-      text: string;
-      classes: string[];
-      mode: 'vocal';
-    })
-  | (ItemBase & { kind: 'burst'; group: string; text: string; mode: 'burst' })
   | (ItemBase & {
       kind: 'slot';
       frame_a: string;
@@ -236,9 +306,31 @@ export type DrillItem =
       distractor: string;
       slot_category: string;
       swap_interval_ms: number;
+      category: ErrorCategory;
       mode: 'pattern';
     })
-  | (ItemBase & { kind: 'recall'; slots: { slot: number; expected: string }[] });
+  | (ItemBase & {
+      kind: 'stream';
+      tokens: string[];
+      wpm: number;
+      anomaly_window_ms: number;
+      anomaly_index: number;
+      anomaly_token: string;
+      expected: string;
+      category: ErrorCategory;
+      mode: 'pattern' | 'typo';
+    })
+  | (ItemBase & {
+      kind: 'pressure';
+      stream_tokens: string[];
+      dictation_text: string;
+      visual_cue: string;
+      wpm: number;
+      response_window_ms: number;
+      window_reduction_pct: number;
+      category: ErrorCategory;
+      mode: 'pattern' | 'typo';
+    });
 
 export interface SessionPlan {
   session_id: string;
