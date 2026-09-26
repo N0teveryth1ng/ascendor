@@ -22,13 +22,23 @@ import { MASTER_WINDOW_DAYS } from '../core/ranks.js';
 import { ALL_MODULE_IDS } from '../core/modules.js';
 import { todayUtc } from '../util.js';
 
-export function buildCandidateProfile(candidateId: CandidateId): CandidateProfile | null {
-  const pcp = getPcp(candidateId);
-  const rank = currentRank(candidateId);
-  const windows = allWindows(candidateId);
-  const locks = activeLocks(candidateId);
-  const history = lockHistory(candidateId);
-  const { floors } = getFloors(candidateId);
+export async function buildCandidateProfile(candidateId: CandidateId): Promise<CandidateProfile | null> {
+  const pcp = await getPcp(candidateId);
+  const rank = await currentRank(candidateId);
+  const windows = await allWindows(candidateId);
+  const locks = await activeLocks(candidateId);
+  const history = await lockHistory(candidateId);
+  const { floors } = await getFloors(candidateId);
+  const [metrics, provenance, streak, log, ranks, remediations, name, phase4] = await Promise.all([
+    getMetrics(candidateId),
+    getMetricProvenance(candidateId),
+    getStreak(candidateId),
+    dailyLog(candidateId, 30),
+    rankHistory(candidateId),
+    openRemediations(candidateId),
+    candidateName(candidateId),
+    phaseSessions(candidateId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+  ]);
 
   const phaseUnlocked = {} as Record<Phase, boolean>;
   for (const phase of [1, 2, 3, 4] as Phase[]) {
@@ -36,7 +46,6 @@ export function buildCandidateProfile(candidateId: CandidateId): CandidateProfil
     phaseUnlocked[phase] = req === null || rankAtLeast(rank, req);
   }
 
-  const phase4 = phaseSessions(candidateId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000);
   const evalResult = evaluateRanks({
     rank,
     rolling_windows: windows,
@@ -48,19 +57,19 @@ export function buildCandidateProfile(candidateId: CandidateId): CandidateProfil
 
   return {
     candidate_id: candidateId,
-    display_name: candidateName(candidateId) ?? candidateId,
+    display_name: name ?? candidateId,
     created_at: nowOf(candidateId),
     pcp,
     current_rank: rank,
-    metrics: getMetrics(candidateId),
+    metrics,
     metric_floors: floors,
-    metric_provenance: getMetricProvenance(candidateId) as unknown as CandidateProfile['metric_provenance'],
+    metric_provenance: provenance as unknown as CandidateProfile['metric_provenance'],
     active_structural_locks: locks,
     rolling_windows: windows,
-    streak: getStreak(candidateId),
-    daily_log: dailyLog(candidateId, 30).map(mapDailyLogEntry),
-    rank_history: rankHistory(candidateId),
-    pending_remediation: openRemediations(candidateId),
+    streak,
+    daily_log: log.map(mapDailyLogEntry),
+    rank_history: ranks,
+    pending_remediation: remediations,
     phase_unlocked: phaseUnlocked,
     master_window: evalResult.master_stats,
   };

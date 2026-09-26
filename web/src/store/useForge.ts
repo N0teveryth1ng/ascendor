@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { api, ApiError } from '@/lib/api';
 import type { CandidateProfile, Dashboard, SessionResult, User } from '@/types';
 
-export type View = 'home' | 'practice' | 'progress' | 'onboarding' | 'session' | 'teacher';
+export type View = 'home' | 'practice' | 'progress' | 'history' | 'onboarding' | 'session' | 'teacher';
 
 interface ForgeState {
   user: User | null;
@@ -12,6 +12,7 @@ interface ForgeState {
   pendingModule: string;
   view: View;
   booting: boolean;
+  signupAllowed: boolean;
   fault: string | null;
 
   boot: () => Promise<void>;
@@ -41,16 +42,22 @@ export const useForge = create<ForgeState>((set, get) => ({
   pendingModule: 'P1_VD',
   view: 'home',
   booting: true,
+  signupAllowed: true,
   fault: null,
 
   boot: async () => {
     try {
-      const { user } = await api.me();
+      const { user, signup_allowed } = await api.me();
       if (!user) {
-        set({ user: null, booting: false, view: 'home' });
+        set({ user: null, booting: false, view: 'home', signupAllowed: signup_allowed });
         return;
       }
-      set({ user, booting: false, view: user.role === 'admin' ? 'teacher' : user.calibrated ? 'home' : 'onboarding' });
+      set({
+        user,
+        booting: false,
+        signupAllowed: signup_allowed,
+        view: user.role === 'admin' ? 'teacher' : user.calibrated ? 'home' : 'onboarding',
+      });
       if (user.role === 'candidate') {
         if (user.calibrated) await get().refreshDashboard();
         else await get().refreshProfile();

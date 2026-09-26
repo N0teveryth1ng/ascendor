@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { buildDashboard } from '../service/dashboard.js';
+import { historyFor, historyTotals } from '../service/history.js';
+import { statsFor } from '../service/stats.js';
 import { listCandidatesForTeacher, teacherDetail } from '../service/teacher.js';
 import { getPcp, listSessions } from '../db/repo.js';
 import { buildDailySchedule } from '../core/scheduler.js';
@@ -10,6 +12,7 @@ import { HttpError } from '../service/httpError.js';
 import { todayUtc } from '../util.js';
 import { MODULES } from '../core/modules.js';
 import { userRoutes } from './api.js';
+import { asyncRoute } from './asyncRoute.js';
 import type { ModuleId } from '../core/types.js';
 
 export const dataRoutes = Router();
@@ -18,44 +21,56 @@ export const dataRoutes = Router();
 // alongside the engine router, so a blanket guard here would reject those too.
 
 /** Candidate-facing dashboard. Only ever the signed-in user's own track. */
-dataRoutes.get('/dashboard', requireAuth, (req, res) => {
-  const id = req.user!.id;
-  if (req.user!.role !== 'candidate') throw new HttpError(403, 'Teacher accounts use the observer view.');
-  const schedule = buildDailySchedule({ date: todayUtc(), active_locks: [], forced_repeat_modules: [] });
-  res.json(buildDashboard(id, req.user!.display_name, schedule.total_s));
-});
+dataRoutes.get(
+  '/dashboard',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = req.user!.id;
+    if (req.user!.role !== 'candidate') throw new HttpError(403, 'Teacher accounts use the observer view.');
+    const schedule = buildDailySchedule({ date: todayUtc(), active_locks: [], forced_repeat_modules: [] });
+    res.json(await buildDashboard(id, req.user!.display_name, schedule.total_s));
+  }),
+);
 
 /** Onboarding copy so the calibration wizard never hardcodes internal labels. */
-dataRoutes.get('/onboarding', requireAuth, (req, res) => {
-  const id = req.user!.id;
-  const pcp = getPcp(id);
-  res.json({
-    calibrated: pcp?.locked === true,
-    steps: CALIBRATION_STEP_COPY,
-    manifest_version: CALIBRATION_MANIFEST.version,
-  });
-});
+dataRoutes.get(
+  '/onboarding',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = req.user!.id;
+    const pcp = await getPcp(id);
+    res.json({
+      calibrated: pcp?.locked === true,
+      steps: CALIBRATION_STEP_COPY,
+      manifest_version: CALIBRATION_MANIFEST.version,
+    });
+  }),
+);
 
 /** Plain-language module list for the candidate's drill picker. */
-dataRoutes.get('/practice', requireAuth, (req, res) => {
-  const id = req.user!.id;
-  const recent = listSessions(id, 50);
-  res.json({
-    modules: (Object.keys(MODULES) as ModuleId[]).map((m) => {
-      const mine = recent.filter((s) => s.module_id === m);
-      return {
-        id: m,
-        label: plainModule(m),
-        phase: MODULES[m].phase,
-        block: MODULES[m].block,
-        sessions: mine.length,
-        accuracy_pct: mine.length
-          ? Number((mine.reduce((a, s) => a + s.accuracy_pct, 0) / mine.length).toFixed(2))
-          : null,
-      };
-    }),
-  });
-});
+dataRoutes.get(
+  '/practice',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = req.user!.id;
+    const recent = await listSessions(id, 50);
+    res.json({
+      modules: (Object.keys(MODULES) as ModuleId[]).map((m) => {
+        const mine = recent.filter((s) => s.module_id === m);
+        return {
+          id: m,
+          label: plainModule(m),
+          phase: MODULES[m].phase,
+          block: MODULES[m].block,
+          sessions: mine.length,
+          accuracy_pct: mine.length
+            ? Number((mine.reduce((a, s) => a + s.accuracy_pct, 0) / mine.length).toFixed(2))
+            : null,
+        };
+      }),
+    });
+  }),
+);
 
 /* ── Section 13.3: user-scoped candidate surface ────────────────────────────
  *
@@ -66,18 +81,54 @@ dataRoutes.get('/practice', requireAuth, (req, res) => {
  * routes — see the route table in api.ts.
  */
 
-dataRoutes.use(userRoutes);
+/**
+ * Section 13.4 HISTORY. Every attempted quest with its full per-attempt record,
+ * newest first. Read-only by construction, and scoped to the signed-in user.
+ */
+dataRoutes.get(
+  '/history',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = req.user!.id;
+    if (req.user!.role !== 'candidate') throw new HttpError(403, 'Teacher accounts use the observer view.');
+    const moduleParam = typeof req.query['module'] === 'string' ? (req.query['module'] as ModuleId) : undefined;
+    const page = await historyFor(id, {
+      limit: Number(req.query['limit'] ?? 25),
+      offset: Number(req.query['offset'] ?? 0),
+      moduleId: moduleParam,
+    });
+    res.json({ ...page, totals: await historyTotals(id) });
+  }),
+);
 
+/** Section 13.5 STATS: green/red movement, strengths, weaknesses, rank impact. */
+dataRoutes.get(
+  '/stats',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const id = req.user!.id;
+    if (req.user!.role !== 'candidate') throw new HttpError(403, 'Teacher accounts use the observer view.');
+    res.json(await statsFor(id));
+  }),
+);
+
+dataRoutes.use(userRoutes);
 /* ── Section 13.6: teacher view ──────────────────────────────────────────── */
 
 export const teacherRoutes = Router();
 
 teacherRoutes.use(requireAuth, requireRole('admin'));
 
-teacherRoutes.get('/candidates', (_req, res) => {
-  res.json({ candidates: listCandidatesForTeacher() });
-});
+teacherRoutes.get(
+  '/candidates',
+  asyncRoute(async (_req, res) => {
+    res.json({ candidates: await listCandidatesForTeacher() });
+  }),
+);
 
-teacherRoutes.get('/candidates/:id', (req, res) => {
-  res.json(teacherDetail(req.params.id!));
-});
+teacherRoutes.get(
+  '/candidates/:id',
+  asyncRoute(async (req, res) => {
+    res.json(await teacherDetail(req.params.id!));
+  }),
+);

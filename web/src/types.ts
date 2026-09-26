@@ -508,3 +508,135 @@ export interface TeacherDetail {
   recent_sessions: { session_id: string; module_id: string; module_plain: string; accuracy_pct: number; mean_latency_ms: number; started_at: string }[];
   recommendation: string;
 }
+
+/* ---- Section 13.4 HISTORY: every attempted quest, full per-attempt detail ---- */
+
+export interface HistoryAttempt {
+  id: number;
+  position: number;
+  item_id: string;
+  item_kind: string;
+  correct: boolean;
+  input: string | null;
+  expected: string | null;
+  latency_ms: number;
+  latency_delta_ms: number | null;
+  error_code: string;
+  error_category: string | null;
+  char_position: number | null;
+  counted_chars: number;
+  correct_chars: number;
+  slot_category: string | null;
+  delayed_recall: boolean;
+  clarity_score: number | null;
+  question_shown: string | null;
+  answer_given: string | null;
+}
+
+export interface HistoryEntry {
+  session_id: string;
+  module_id: string;
+  module_name: string;
+  phase: number;
+  block_id: string | null;
+  sublevel: number;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number;
+  accuracy_pct: number;
+  mean_latency_ms: number;
+  threshold_ms: number;
+  speed_multiplier: number;
+  char_correct: number;
+  char_total: number;
+  errors: string[];
+  ape: Record<string, number>;
+  is_delayed_recall: boolean;
+  recall_of_session: string | null;
+  attempt_count: number;
+  error_count: number;
+  attempts: HistoryAttempt[];
+}
+
+export interface HistoryTotals {
+  attempts: number;
+  correct: number;
+  errors: number;
+  sessions: number;
+  accuracy_pct: number;
+  session_accuracy_pct: number;
+  total_duration_ms: number;
+  first_attempt_at: string | null;
+  last_attempt_at: string | null;
+}
+
+export interface HistoryResponse {
+  entries: HistoryEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  totals: HistoryTotals;
+}
+
+/* ---- Section 13.5 STATS: green/red movement, strengths, rank impact ---- */
+
+export interface MovementCounts {
+  green: number;
+  red: number;
+  flat: number;
+  green_pct: number;
+  red_pct: number;
+}
+
+export interface MetricStats extends MovementCounts {
+  key: string;
+  label: string;
+  blurb: string;
+  direction: 'up' | 'down';
+  current: number;
+  first: number;
+  delta: number;
+  change_pct: number;
+  points: { at: string; value: number }[];
+}
+
+export interface StrengthWeakness {
+  key: string;
+  label: string;
+  blurb: string;
+  value: number;
+  score: number;
+}
+
+export interface RankImpact {
+  rank: string;
+  label: string;
+  at: string;
+  sessions_since_previous: number | null;
+}
+
+export interface ModuleStat {
+  module_id: string;
+  sessions: number;
+  attempts: number;
+  correct: number;
+  accuracy_pct: number;
+  mean_latency_ms: number;
+  last_played_at: string | null;
+}
+
+export interface StatsBundle {
+  metrics: MetricStats[];
+  overall: MovementCounts;
+  strengths: StrengthWeakness[];
+  weaknesses: StrengthWeakness[];
+  rank_current: string | null;
+  rank_current_label: string;
+  rank_history: RankImpact[];
+  promotions: number;
+  demotions: number;
+  modules: ModuleStat[];
+  delayed_recall_pct: number;
+  delayed_recall_accuracy_pct: number;
+  standard_accuracy_pct: number;
+}

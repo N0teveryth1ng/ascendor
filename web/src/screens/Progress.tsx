@@ -1,16 +1,25 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForge } from '@/store/useForge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StreakHeatmap } from '@/components/Heatmap';
 import { MetricTrendChart } from '@/components/MetricTrendChart';
 import { ModuleBreakdownChart } from '@/components/ModuleBreakdownChart';
 import { rankLabel } from '@/lib/copy';
+import { api } from '@/lib/api';
+import { GreenRedPie } from '@/components/GreenRedPie';
+import { MetricSplitBars, ModuleAccuracyBars, RankImpactTimeline, StrengthWeaknessCards } from '@/components/StatsCharts';
+import type { StatsBundle } from '@/types';
 
 export function Progress() {
   const { dashboard, refreshDashboard } = useForge();
+  const [stats, setStats] = useState<StatsBundle | null>(null);
 
   useEffect(() => {
     void refreshDashboard();
+    void api
+      .stats()
+      .then(setStats)
+      .catch(() => setStats(null));
   }, [refreshDashboard]);
 
   if (!dashboard) {
@@ -30,6 +39,16 @@ export function Progress() {
       <StreakHeatmap data={dashboard.heatmap} />
       <MetricTrendChart trends={dashboard.trends} />
       <ModuleBreakdownChart modules={dashboard.modules} />
+
+      {stats && (
+        <>
+          <GreenRedPie counts={stats.overall} />
+          <StrengthWeaknessCards stats={stats} />
+          <MetricSplitBars metrics={stats.metrics} />
+          <ModuleAccuracyBars modules={stats.modules} />
+          <RankImpactTimeline stats={stats} />
+        </>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>

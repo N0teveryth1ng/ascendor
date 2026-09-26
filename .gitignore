@@ -4,10 +4,9 @@ dist/
 .env
 .env.local
 .DS_Store
-server/data/*.db
-server/data/*.db-journal
-server/data/*.db-wal
-server/data/*.db-shm
+# Legacy local SQLite databases. The engine is on Postgres now; these are
+# untracked leftovers kept on disk only as a migration source.
+server/data/
 web/e2e/.tmp/
 test-results/
 playwright-report/

@@ -5,11 +5,13 @@ import type {
   Dashboard,
   DrillItem,
   ErrorEvent,
+  HistoryResponse,
   ModuleId,
   Onboarding,
   PracticeModule,
   SessionPlan,
   SessionResult,
+  StatsBundle,
   Streak,
   StructuralLock,
   TeacherCandidate,
@@ -49,7 +51,7 @@ const post = <T,>(path: string, body: unknown) => request<T>(path, { method: 'PO
 
 export const api = {
   /* auth */
-  me: () => request<{ user: User | null }>('/auth/me'),
+  me: () => request<{ user: User | null; signup_allowed: boolean }>('/auth/me'),
   signIn: (email: string, password: string) => post<{ user: User }>('/auth/signin', { email, password }),
   signUp: (email: string, password: string, display_name: string) =>
     post<{ user: User }>('/auth/signup', { email, password, display_name }),
@@ -64,6 +66,17 @@ export const api = {
   dashboard: () => request<Dashboard>('/dashboard'),
   onboarding: () => request<Onboarding>('/onboarding'),
   practice: () => request<{ modules: PracticeModule[] }>('/practice'),
+
+  /* history + stats - always the signed-in candidate, never an id in the URL */
+  history: (params: { limit?: number; offset?: number; module?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit !== undefined) q.set('limit', String(params.limit));
+    if (params.offset !== undefined) q.set('offset', String(params.offset));
+    if (params.module) q.set('module', params.module);
+    const suffix = q.toString();
+    return request<HistoryResponse>(`/history${suffix ? `?${suffix}` : ''}`);
+  },
+  stats: () => request<StatsBundle>('/stats'),
 
   /* calibration — subject is the session cookie, never a URL segment */
   calibrationStatus: () => request<CalibrationStatus>('/calibration'),

@@ -4,6 +4,7 @@ import type {
   DailyTierOutcome,
   ErrorEvent,
   ModuleId,
+  Pcp,
   Rank,
   SessionResult,
   SessionResultInput,
@@ -86,9 +87,16 @@ export class GateError extends Error {
  * Section 11: the APE recalculation is a post-session batch job, never
  * real-time mid-session. Thresholds change session-to-session only, so a
  * candidate is never fighting a moving target inside one execution block.
+ *
+ * Statement order below is load-bearing and is preserved exactly: each read
+ * depends on the writes that precede it, so the awaits were threaded through
+ * the existing sequence rather than re-grouped into parallel batches.
  */
-export function processSessionResult(input: SessionResultInput, itemPayloads: unknown[] = []): SessionResult {
-  const pcp = getPcp(input.candidate_id);
+export async function processSessionResult(
+  input: SessionResultInput,
+  itemPayloads: unknown[] = [],
+): Promise<SessionResult> {
+  const pcp = await getPcp(input.candidate_id);
   if (!pcp) {
     throw new GateError('CALIBRATION INCOMPLETE — no PCP on file. Drilling endpoints are gated.', 423);
   }
@@ -101,7 +109,7 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
   const moduleId: ModuleId = input.module_id;
   const descriptor = MODULES[moduleId];
 
-  const before = getWindow(input.candidate_id, moduleId);
+  const before = await getWindow(input.candidate_id, moduleId);
   const accuracy = sessionAccuracyPct(attempts);
   const meanLatency = sessionMeanLatencyMs(attempts);
 
@@ -131,8 +139,8 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
   let window = recalc.window;
 
   /* Section 2.3 — structural gap detection. */
-  const counters = getErrorCounters(input.candidate_id, moduleId);
-  const existing = activeLocks(input.candidate_id);
+  const counters = await getErrorCounters(input.candidate_id, moduleId);
+  const existing = await activeLocks(input.candidate_id);
   const detection = detectStructuralLocks(
     window.last_8_sessions,
     counters,
@@ -140,34 +148,34 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
     moduleId,
     nowIso(),
   );
-  saveErrorCounters(input.candidate_id, moduleId, detection.counters);
+  await saveErrorCounters(input.candidate_id, moduleId, detection.counters);
 
   const locksTriggered: string[] = [];
   const locksCleared: string[] = [];
 
   // Snapshot locks that existed BEFORE this session's outcome was known, so a
   // lock triggered by this session is not also billed against its own budget.
-  const preExisting = activeLockRows(input.candidate_id);
+  const preExisting = await activeLockRows(input.candidate_id);
 
   for (const tag of detection.triggered) {
-    insertLock(input.candidate_id, makeLock(tag, moduleId, nowIso()));
+    await insertLock(input.candidate_id, makeLock(tag, moduleId, nowIso()));
     locksTriggered.push(tag);
   }
   for (const tag of detection.cleared) {
     const row = preExisting.find((l) => l.tag === tag && l.module_id === moduleId);
     if (row) {
-      clearLock(Number(row.id), nowIso());
-      clearErrorCounter(input.candidate_id, moduleId, tag);
+      await clearLock(Number(row.id), nowIso());
+      await clearErrorCounter(input.candidate_id, moduleId, tag);
       locksCleared.push(tag);
     }
   }
   // Remediation budget burns down one session per session run — starting from
   // the session AFTER the one that triggered it.
   for (const row of preExisting) {
-    if (row.module_id === moduleId) decrementLockSessions(Number(row.id));
+    if (row.module_id === moduleId) await decrementLockSessions(Number(row.id));
   }
 
-  const locksNow = activeLocks(input.candidate_id);
+  const locksNow = await activeLocks(input.candidate_id);
 
   /* Section 2.4 — escalation trigger. All three conditions simultaneously. */
   let escalationReady = false;
@@ -177,13 +185,13 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
     window = applyEscalation(window, MAX_SUBLEVEL, input.session_id);
   }
   window.escalation_ready = escalationReady;
-  saveWindow(input.candidate_id, moduleId, window);
+  await saveWindow(input.candidate_id, moduleId, window);
 
   /* Section 7.4.1 — bound the Pressure Chamber's window reduction by the
      candidate's own statistical ceiling. */
   let windowBounded: string | null = null;
   if (moduleId === 'P4_PC') {
-    const rollingAccuracy = rollingSessionAccuracy(input.candidate_id);
+    const rollingAccuracy = await rollingSessionAccuracy(input.candidate_id);
     const decision = boundPressureChamber(PRESSURE_CHAMBER_MAX_WINDOW_REDUCTION_PCT, rollingAccuracy);
     windowBounded = decision.reason;
   }
@@ -192,7 +200,7 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
   const isDelayed = attempts.some((a) => a.delayed_recall);
   const storedItems = moduleId === 'P1_VSF' ? mergeScenePayload(itemPayloads, isDelayed) : itemPayloads;
 
-  insertSession({
+  await insertSession({
     sessionId: input.session_id,
     candidateId: input.candidate_id,
     moduleId,
@@ -219,29 +227,29 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
   });
 
   /* Section 3 — metrics over a rolling window, not a single session. */
-  const rolling = computeRollingMetrics(input.candidate_id, pcp, locksNow);
-  upsertMetrics(input.candidate_id, rolling, rolling.provenance);
+  const rolling = await computeRollingMetrics(input.candidate_id, pcp, locksNow);
+  await upsertMetrics(input.candidate_id, rolling, rolling.provenance);
 
   /* Section 8 — the only sanctioned downward path for baseline stats. */
-  const { floors } = getFloors(input.candidate_id);
-  const hist = metricHistory(input.candidate_id, 8);
+  const { floors } = await getFloors(input.candidate_id);
+  const hist = await metricHistory(input.candidate_id, 8);
   const revision = reviseCapabilityBaseline(rolling, floors, hist);
   if (revision.should_move) {
     // Punitive failure data never reaches this path; it is trend-driven only.
-    const { baseline } = getFloors(input.candidate_id);
-    upsertFloors(input.candidate_id, floors, revision.new_baseline ?? baseline);
+    const { baseline } = await getFloors(input.candidate_id);
+    await upsertFloors(input.candidate_id, floors, revision.new_baseline ?? baseline);
   }
 
   if (escalationReady) {
-    completeRemediations(input.candidate_id, moduleId);
+    await completeRemediations(input.candidate_id, moduleId);
   }
 
   /* Section 5.2 — daily aggregate, failure tier, streak. */
-  const daily = applyDailyTier(input.candidate_id);
+  const daily = await applyDailyTier(input.candidate_id);
   const gradeLog = buildGradeLog(attempts, locksTriggered, daily.forced_repeat);
 
   /* Section 5.1 — rank gating. */
-  const rankChange = evaluateRankChange(input.candidate_id);
+  const rankChange = await evaluateRankChange(input.candidate_id);
 
   return {
     session_id: input.session_id,
@@ -258,7 +266,7 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
     rank_change: rankChange,
     // The daily tier is a per-day verdict, so the report that shows it must be
     // the one the candidate just completed. Never lockouts, never baseline cuts.
-    daily_tier: applyDailyTier(input.candidate_id),
+    daily_tier: daily,
     grade_log: gradeLog,
   };
 
@@ -286,12 +294,12 @@ export function processSessionResult(input: SessionResultInput, itemPayloads: un
 
 /* ── Rolling metrics across the last 8 sessions ───────────────────────────── */
 
-export function computeRollingMetrics(
+export async function computeRollingMetrics(
   candidateId: CandidateId,
-  pcp: NonNullable<ReturnType<typeof getPcp>>,
+  pcp: Pcp,
   locks: StructuralLock[],
 ) {
-  const groups = recentAttemptGroups(candidateId, 8);
+  const groups = await recentAttemptGroups(candidateId, 8);
   const allAttempts = groups.flatMap((g) => g.attempts);
   const fresh = allAttempts.filter((a) => !a.delayed_recall);
   const delayed = allAttempts.filter((a) => a.delayed_recall);
@@ -353,18 +361,19 @@ export function computeRollingMetrics(
 
 /* ── Section 5.2: daily aggregate and failure tier ────────────────────────── */
 
-export function applyDailyTier(candidateId: CandidateId): DailyTierOutcome {
+export async function applyDailyTier(candidateId: CandidateId): Promise<DailyTierOutcome> {
   const date = todayUtc();
-  const { aggregate_pct, sessions } = dailyAggregate(candidateId, date);
+  const { aggregate_pct, sessions } = await dailyAggregate(candidateId, date);
 
   if (sessions === 0) {
+    const streak = await getStreak(candidateId);
     return {
       date,
       aggregate_pct: 0,
       tier: 'NONE',
-      streak_before: getStreak(candidateId).current,
-      streak_after: getStreak(candidateId).current,
-      multiplier_after: getStreak(candidateId).multiplier,
+      streak_before: streak.current,
+      streak_after: streak.current,
+      multiplier_after: streak.multiplier,
       modules_failed: [],
       forced_repeat: false,
       lockout_applied: false,
@@ -372,10 +381,10 @@ export function applyDailyTier(candidateId: CandidateId): DailyTierOutcome {
     };
   }
 
-  const streakBefore = getStreak(candidateId);
+  const streakBefore = await getStreak(candidateId);
   const tier = classifyDailyFailure(aggregate_pct);
   const consequence = consequenceForTier(tier);
-  const modulesFailed = tier === 'NONE' ? [] : modulesBelowBandToday(candidateId, date);
+  const modulesFailed = tier === 'NONE' ? [] : await modulesBelowBandToday(candidateId, date);
 
   /* Section 5.2 — a streak counts consecutive DAYS, not sessions. Running
      three sessions in one day must still register as day one, so every session
@@ -400,7 +409,7 @@ export function applyDailyTier(candidateId: CandidateId): DailyTierOutcome {
         : streakBefore.multiplier;
   const best = Math.max(streakBefore.best, streakAfter);
 
-  saveStreak(candidateId, {
+  await saveStreak(candidateId, {
     current: streakAfter,
     multiplier: multiplierAfter,
     last_date: date,
@@ -409,12 +418,12 @@ export function applyDailyTier(candidateId: CandidateId): DailyTierOutcome {
 
   if (consequence.forced_repeat) {
     for (const m of modulesFailed) {
-      addPendingRemediation(candidateId, m, null, `daily aggregate ${round2(aggregate_pct)}% below 85%`);
+      await addPendingRemediation(candidateId, m, null, `daily aggregate ${round2(aggregate_pct)}% below 85%`);
     }
   }
 
-  if (!dailyLogExists(candidateId, date)) {
-    insertDailyLog({
+  if (!(await dailyLogExists(candidateId, date))) {
+    await insertDailyLog({
       candidateId,
       date,
       aggregatePct: aggregate_pct,
@@ -444,8 +453,8 @@ export function applyDailyTier(candidateId: CandidateId): DailyTierOutcome {
 }
 
 /** Mean accuracy across the candidate's recent sessions, for chamber bounds. */
-export function rollingSessionAccuracy(candidateId: CandidateId): number {
-  const groups = recentAttemptGroups(candidateId, 8);
+export async function rollingSessionAccuracy(candidateId: CandidateId): Promise<number> {
+  const groups = await recentAttemptGroups(candidateId, 8);
   if (!groups.length) return 0;
   const accs = groups.map((g) => accuracyOf(g.attempts));
   return r2(accs.reduce((a, b) => a + b, 0) / accs.length);
@@ -477,20 +486,25 @@ function mergeScenePayload(payloads: unknown[], isDelayed: boolean): unknown[] {
 
 /* ── Rank progression ─────────────────────────────────────────────────────── */
 
-function evaluateRankChange(candidateId: CandidateId): { from: Rank; to: Rank } | null {
-  const rank = currentRank(candidateId);
+async function evaluateRankChange(candidateId: CandidateId): Promise<{ from: Rank; to: Rank } | null> {
+  const rank = await currentRank(candidateId);
+  const moduleIds = Object.keys(MODULES) as ModuleId[];
+  const [windows, locks, history, phase4] = await Promise.all([
+    Promise.all(moduleIds.map((id) => getWindow(candidateId, id))),
+    activeLocks(candidateId),
+    lockHistory(candidateId),
+    phaseSessions(candidateId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+  ]);
   const evalResult = evaluateRanks({
     rank,
-    rolling_windows: Object.fromEntries(
-      (Object.keys(MODULES) as ModuleId[]).map((id) => [id, getWindow(candidateId, id)]),
-    ),
-    locks: activeLocks(candidateId),
-    lock_history: lockHistory(candidateId),
-    phase4_sessions: phaseSessions(candidateId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+    rolling_windows: Object.fromEntries(moduleIds.map((id, i) => [id, windows[i]!])),
+    locks,
+    lock_history: history,
+    phase4_sessions: phase4,
     now: new Date(),
   });
   if (evalResult.nextRank && RANK_STRENGTH[evalResult.nextRank] < RANK_STRENGTH[rank]) {
-    insertRank(candidateId, evalResult.nextRank);
+    await insertRank(candidateId, evalResult.nextRank);
     return { from: rank, to: evalResult.nextRank };
   }
   return null;

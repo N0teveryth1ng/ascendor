@@ -43,14 +43,17 @@ function addDays(d: Date, n: number): Date {
   return out;
 }
 
-export function streakHeatmap(userId: string, weeks = 26): { days: { date: string; level: number; pct: number; sessions: number }[]; current: number; longest: number } {
+export async function streakHeatmap(
+  userId: string,
+  weeks = 26,
+): Promise<{ days: { date: string; level: number; pct: number; sessions: number }[]; current: number; longest: number }> {
   const db = getDb();
   const today = new Date(`${todayUtc()}T00:00:00.000Z`);
   const start = addDays(today, -(weeks * 7 - 1));
   start.setUTCDate(start.getUTCDate() - start.getUTCDay());
 
   const rows = plainAll<{ date: string; aggregate_pct: number; sessions: number }>(
-    db
+    await db
       .prepare(
         `SELECT d.date AS date,
                 d.aggregate_pct AS aggregate_pct,
@@ -61,7 +64,7 @@ export function streakHeatmap(userId: string, weeks = 26): { days: { date: strin
             AND d.date >= ?
           ORDER BY d.date`,
       )
-      .all(userId, dayKey(start)) as unknown[],
+      .all(userId, dayKey(start)),
   );
 
   const byDate = new Map(rows.map((r) => [r.date, r]));
@@ -88,7 +91,7 @@ export function streakHeatmap(userId: string, weeks = 26): { days: { date: strin
     }
   }
 
-  const streakRow = db.prepare('SELECT current FROM streaks WHERE candidate_id = ?').get(userId) as
+  const streakRow = (await db.prepare('SELECT current FROM streaks WHERE candidate_id = ?').get(userId)) as
     | { current?: number }
     | undefined;
 
@@ -112,22 +115,22 @@ export interface TrendSeries {
   change_pct: number | null;
 }
 
-export function metricTrends(userId: string, days = 30): TrendSeries[] {
+export async function metricTrends(userId: string, days = 30): Promise<TrendSeries[]> {
   const db = getDb();
   const today = new Date(`${todayUtc()}T00:00:00.000Z`);
   const from = dayKey(addDays(today, -(days - 1)));
 
   const rows = plainAll<{ at: string; metrics: string }>(
-    db
+    await db
       .prepare(
         `SELECT at, metrics FROM metric_history
           WHERE candidate_id = ? AND substr(at, 1, 10) >= ?
           ORDER BY at`,
       )
-      .all(userId, from) as unknown[],
+      .all(userId, from),
   );
 
-  const current = db.prepare('SELECT * FROM metrics WHERE candidate_id = ?').get(userId) as
+  const current = (await db.prepare('SELECT * FROM metrics WHERE candidate_id = ?').get(userId)) as
     | Record<string, number>
     | undefined;
 
@@ -140,7 +143,7 @@ export function metricTrends(userId: string, days = 30): TrendSeries[] {
     }));
     // Carry the live value forward so the line reaches "now" even if the last
     // history write was a recalibration rather than a session.
-    const nowValue = current ? Number((current[key] ?? 0).toFixed(2)) : points.at(-1)?.value ?? 0;
+    const nowValue = current ? Number((current[key] ?? 0).toFixed(2)) : (points.at(-1)?.value ?? 0);
     const live = [...points];
     if (live.length === 0 || live[live.length - 1]!.date !== todayUtc()) {
       live.push({ date: todayUtc(), value: nowValue });
@@ -178,7 +181,7 @@ export interface ModuleBreakdown {
   sessions: number;
 }
 
-export function moduleBreakdown(userId: string, days = 30): ModuleBreakdown[] {
+export async function moduleBreakdown(userId: string, days = 30): Promise<ModuleBreakdown[]> {
   const db = getDb();
   const since = `${dayKey(addDays(new Date(`${todayUtc()}T00:00:00.000Z`), -(days - 1)))}`;
   const rows = plainAll<{
@@ -188,7 +191,7 @@ export function moduleBreakdown(userId: string, days = 30): ModuleBreakdown[] {
     attempts: number;
     sessions: number;
   }>(
-    db
+    await db
       .prepare(
         `SELECT module_id,
                 AVG(CASE WHEN is_correct = 1 THEN 100.0 ELSE 0.0 END) AS accuracy,
@@ -199,7 +202,7 @@ export function moduleBreakdown(userId: string, days = 30): ModuleBreakdown[] {
           WHERE user_id = ? AND substr(created_at, 1, 10) >= ?
           GROUP BY module_id`,
       )
-      .all(userId, since) as unknown[],
+      .all(userId, since),
   );
 
   return (Object.keys(MODULES) as ModuleId[]).map((id) => {
@@ -216,21 +219,28 @@ export function moduleBreakdown(userId: string, days = 30): ModuleBreakdown[] {
   });
 }
 
-export function rankCard(userId: string): {
+export async function rankCard(userId: string): Promise<{
   current: Rank;
   next: Rank | null;
   progress_pct: number;
   requirements: { label: string; met: boolean; detail: string }[];
   next_unlocks: { rank: Rank; what: string }[];
   unlocked_modules: ModuleId[];
-} {
-  const rank = currentRank(userId);
+}> {
+  const rank = await currentRank(userId);
+  const moduleIds = Object.keys(MODULES) as ModuleId[];
+  const [windows, locks, history, phase4] = await Promise.all([
+    Promise.all(moduleIds.map((m) => getWindow(userId, m))),
+    activeLocks(userId),
+    lockHistory(userId),
+    phaseSessions(userId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+  ]);
   const evaluation = evaluateRanks({
     rank,
-    rolling_windows: Object.fromEntries((Object.keys(MODULES) as ModuleId[]).map((m) => [m, getWindow(userId, m)])),
-    locks: activeLocks(userId),
-    lock_history: lockHistory(userId),
-    phase4_sessions: phaseSessions(userId, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+    rolling_windows: Object.fromEntries(moduleIds.map((m, i) => [m, windows[i]!])),
+    locks,
+    lock_history: history,
+    phase4_sessions: phase4,
     now: new Date(),
   });
 
@@ -245,13 +255,13 @@ export function rankCard(userId: string): {
   const nextUnlocks: { rank: Rank; what: string }[] = [];
   if (evaluation.nextRank) {
     const nextIdx = RANK_ORDER.indexOf(evaluation.nextRank);
-    const unlockedPhases = (Object.keys(MODULES) as ModuleId[])
+    const unlockedPhases = moduleIds
       .map((m) => MODULES[m].phase)
       .filter((p) => PHASE_UNLOCK_RANK[p as 1 | 2 | 3 | 4] === evaluation.nextRank);
     for (const phase of [...new Set(unlockedPhases)]) {
       nextUnlocks.push({
         rank: RANK_ORDER[nextIdx]!,
-        what: `${[...new Set((Object.keys(MODULES) as ModuleId[]).filter((m) => MODULES[m].phase === phase).map(plainModule))].join(', ')}`,
+        what: `${[...new Set(moduleIds.filter((m) => MODULES[m].phase === phase).map(plainModule))].join(', ')}`,
       });
     }
     if (nextUnlocks.length === 0) nextUnlocks.push({ rank: RANK_ORDER[nextIdx]!, what: 'faster, harder material' });
@@ -263,7 +273,7 @@ export function rankCard(userId: string): {
     progress_pct,
     requirements: reqs.map((r) => ({ label: r.label, met: r.met, detail: r.detail })),
     next_unlocks: nextUnlocks,
-    unlocked_modules: (Object.keys(MODULES) as ModuleId[]).filter((m) =>
+    unlocked_modules: moduleIds.filter((m) =>
       canUnlockPhase(MODULES[m].phase as 1 | 2 | 3 | 4, rank, PHASE_UNLOCK_RANK[MODULES[m].phase as 1 | 2 | 3 | 4]),
     ),
   };
@@ -281,17 +291,19 @@ export interface TodayStatus {
   tier: string | null;
 }
 
-export function todayStatus(userId: string, blockTotalS: number): TodayStatus {
+export async function todayStatus(userId: string, blockTotalS: number): Promise<TodayStatus> {
   const db = getDb();
   const today = todayUtc();
-  const count = db
+  const count = (await db
     .prepare('SELECT COUNT(*) AS n FROM sessions WHERE candidate_id = ? AND substr(started_at, 1, 10) = ?')
-    .get(userId, today) as { n?: number } | undefined;
+    .get(userId, today)) as { n?: number } | undefined;
   const sessions = count?.n ?? 0;
-  const log = db
+  const log = (await db
     .prepare('SELECT aggregate_pct, tier FROM daily_log WHERE candidate_id = ? AND date = ? ORDER BY recorded_at DESC LIMIT 1')
-    .get(userId, today) as { aggregate_pct?: number; tier?: string } | undefined;
+    .get(userId, today)) as { aggregate_pct?: number; tier?: string } | undefined;
   const target = 5;
+
+  const [remediations, locks] = await Promise.all([openRemediations(userId), activeLocks(userId)]);
 
   return {
     date: today,
@@ -299,8 +311,8 @@ export function todayStatus(userId: string, blockTotalS: number): TodayStatus {
     target_sessions: target,
     block_total_s: blockTotalS,
     state: sessions === 0 ? 'NOT_STARTED' : sessions >= target ? 'COMPLETE' : 'IN_PROGRESS',
-    forced_repeat_modules: openRemediations(userId),
-    active_locks: activeLocks(userId).filter((l) => l.remediation_active).length,
+    forced_repeat_modules: remediations,
+    active_locks: locks.filter((l) => l.remediation_active).length,
     aggregate_pct: log?.aggregate_pct ?? null,
     tier: log?.tier ?? null,
   };
@@ -309,24 +321,35 @@ export function todayStatus(userId: string, blockTotalS: number): TodayStatus {
 export interface DashboardPayload {
   calibrated: boolean;
   display_name: string;
-  heatmap: ReturnType<typeof streakHeatmap>;
+  heatmap: Awaited<ReturnType<typeof streakHeatmap>>;
   trends: TrendSeries[];
   modules: ModuleBreakdown[];
-  rank: ReturnType<typeof rankCard>;
+  rank: Awaited<ReturnType<typeof rankCard>>;
   today: TodayStatus;
   pcp_locked: boolean;
 }
 
-export function buildDashboard(userId: string, displayName: string, blockTotalS: number): DashboardPayload {
-  const pcp = getPcp(userId);
+export async function buildDashboard(
+  userId: string,
+  displayName: string,
+  blockTotalS: number,
+): Promise<DashboardPayload> {
+  const pcp = await getPcp(userId);
+  const [heatmap, trends, modules, rank, today] = await Promise.all([
+    streakHeatmap(userId),
+    metricTrends(userId),
+    moduleBreakdown(userId),
+    rankCard(userId),
+    todayStatus(userId, blockTotalS),
+  ]);
   return {
     calibrated: !!pcp,
     display_name: displayName,
-    heatmap: streakHeatmap(userId),
-    trends: metricTrends(userId),
-    modules: moduleBreakdown(userId),
-    rank: rankCard(userId),
-    today: todayStatus(userId, blockTotalS),
+    heatmap,
+    trends,
+    modules,
+    rank,
+    today,
     pcp_locked: pcp?.locked === true,
   };
 }

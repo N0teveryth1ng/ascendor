@@ -1,36 +1,26 @@
-import express from 'express';
-import cors from 'cors';
-import { api, errorHandler } from './routes/api.js';
-import { authRoutes } from './routes/auth.js';
-import { dataRoutes, teacherRoutes } from './routes/data.js';
-import { attachUser } from './middleware/auth.js';
-import { getDb } from './db/index.js';
-import { seedAccounts } from './service/seed.js';
+import { app, prepare } from './app.js';
 
 const PORT = Number(process.env.PORT ?? 5174);
 const HOST = process.env.HOST ?? '127.0.0.1';
 
-const app = express();
-app.use(cors({ credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+/**
+ * Long-running process entry point (local dev, `npm start`, container hosts).
+ *
+ * The schema is applied and any fixtures are written before the listener opens,
+ * so the first request cannot race an unmigrated database. For a serverless
+ * host, see `api/index.ts`, which awaits the same `prepare()` per cold start
+ * instead of listening.
+ */
+async function start(): Promise<void> {
+  await prepare();
+  app.listen(PORT, HOST, () => {
+    // System voice: report state, do not converse.
+    console.log(`[FORGE] api listening on http://${HOST}:${PORT}`);
+  });
+}
 
-getDb();
-seedAccounts();
-
-app.use(attachUser);
-
-app.use('/api/auth', authRoutes);
-app.use('/api', dataRoutes);
-app.use('/api/teacher', teacherRoutes);
-app.use('/api', api);
-
-app.use((_req, res) => {
-  res.status(404).json({ error: 'NOT FOUND' });
-});
-
-app.use(errorHandler);
-
-app.listen(PORT, HOST, () => {
+void start().catch((err) => {
   // System voice: report state, do not converse.
-  console.log(`[FORGE] api listening on http://${HOST}:${PORT}`);
+  console.error('[FORGE] failed to start:', err instanceof Error ? err.message : err);
+  process.exit(1);
 });

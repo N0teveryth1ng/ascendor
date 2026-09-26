@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import type { CandidateId, ModuleId } from '../core/types.js';
+import type { CandidateId, ModuleId, Pcp } from '../core/types.js';
+import { asyncRoute } from './asyncRoute.js';
 import { ALL_MODULE_IDS, MODULES, PHASE_UNLOCK_RANK, rankAtLeast } from '../core/modules.js';
 import { buildCandidateProfile, availableModules } from '../service/profile.js';
 import {
@@ -83,8 +84,8 @@ api.get('/meta', (_req, res) => {
 
 /* ── Candidates ───────────────────────────────────────────────────────────── */
 
-function loadCandidate(candidateId: CandidateId): void {
-  ensureCandidate(candidateId);
+async function loadCandidate(candidateId: CandidateId): Promise<void> {
+  await ensureCandidate(candidateId);
 }
 
 /**
@@ -112,10 +113,10 @@ function ownId(req: Request): CandidateId {
    the subject through ownId, so there is no second copy of the logic to keep in
    sync. See ownId. */
 
-function handleCalibrationStatus(req: Request, res: Response): void {
+async function handleCalibrationStatus(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
-  res.json(calibrationStatus(id));
+  await loadCandidate(id);
+  res.json(await calibrationStatus(id));
 }
 
 function handleCalibrationBatteryRoute(req: Request, res: Response): void {
@@ -132,11 +133,11 @@ function handleCalibrationBatteryRoute(req: Request, res: Response): void {
  * plan against a neutral, never-persisted probe profile and writes no engine
  * state — grading still comes exclusively from the recorded passes.
  */
-function handleCalibrationProbe(req: Request, res: Response): void {
+async function handleCalibrationProbe(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
+  await loadCandidate(id);
   const moduleId = String(req.query.module ?? 'P1_VD') as ModuleId;
-  const { plan } = planFor(id, moduleId, { gated: false });
+  const { plan } = await planFor(id, moduleId, { gated: false });
   res.json({ plan });
 }
 
@@ -182,14 +183,14 @@ function calibrationBattery() {
   };
 }
 
-function handleRecordPass(req: Request, res: Response): void {
+async function handleRecordPass(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
+  await loadCandidate(id);
   const vector = String(req.body?.vector ?? '');
   const passType = String(req.body?.pass_type ?? '');
   if (!['C1', 'C2', 'C3', 'C4', 'C5'].includes(vector)) throw new HttpError(400, 'unknown vector');
   if (!['untimed', 'timed'].includes(passType)) throw new HttpError(400, 'pass_type must be untimed|timed');
-  recordPass(id, vector, passType as 'untimed' | 'timed', {
+  await recordPass(id, vector, passType as 'untimed' | 'timed', {
     correct: Number(req.body?.correct ?? 0),
     total: Number(req.body?.total ?? 0),
     mean_latency_ms: Number(req.body?.mean_latency_ms ?? 0),
@@ -202,25 +203,25 @@ function handleRecordPass(req: Request, res: Response): void {
   res.json({ recorded: true, vector, pass_type: passType });
 }
 
-function handleFinalise(req: Request, res: Response): void {
+async function handleFinalise(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
+  await loadCandidate(id);
   const passes = Array.isArray(req.body?.passes) ? req.body.passes : [];
-  const pcp = finaliseCalibration(id, passes, { recalibrate: req.body?.recalibrate === true });
-  res.json({ pcp, profile: buildCandidateProfile(id) });
+  const pcp = await finaliseCalibration(id, passes, { recalibrate: req.body?.recalibrate === true });
+  res.json({ pcp, profile: await buildCandidateProfile(id) });
 }
 
 /* ── Profile & dashboard ──────────────────────────────────────────────────── */
 
-function handleProfile(req: Request, res: Response): void {
+async function handleProfile(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
-  const profile = buildCandidateProfile(id);
+  await loadCandidate(id);
+  const profile = await buildCandidateProfile(id);
   if (!profile) throw new HttpError(404, 'profile unavailable');
   res.json({
     profile,
     modules: availableModules(profile),
-    sessions: listSessions(id, 40),
+    sessions: await listSessions(id, 40),
     schedule: buildDailySchedule({
       date: todayUtc(),
       active_locks: profile.active_structural_locks,
@@ -229,55 +230,66 @@ function handleProfile(req: Request, res: Response): void {
   });
 }
 
-function handleSchedule(req: Request, res: Response): void {
+async function handleSchedule(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
-  const profile = buildCandidateProfile(id);
+  await loadCandidate(id);
+  const profile = await buildCandidateProfile(id);
+  const moduleIds = Object.keys(MODULES) as ModuleId[];
   // Rank requirements ride along with the schedule: both are read-only views
   // of the same candidate state, so the UI needs one call, not two.
+  const [locks, remediations, windows, history, phase4, rank] = await Promise.all([
+    profile ? Promise.resolve(profile.active_structural_locks) : activeLocks(id),
+    openRemediations(id),
+    Promise.all(moduleIds.map((m) => getWindow(id, m))),
+    lockHistory(id),
+    phaseSessions(id, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+    currentRank(id),
+  ]);
   res.json({
     ...buildDailySchedule({
       date: todayUtc(),
-      active_locks: profile?.active_structural_locks ?? activeLocks(id),
-      forced_repeat_modules: openRemediations(id),
+      active_locks: locks,
+      forced_repeat_modules: remediations,
     }),
     rank_evaluation: evaluateRanks({
-      rank: currentRank(id),
-      rolling_windows: Object.fromEntries(
-        (Object.keys(MODULES) as ModuleId[]).map((m) => [m, getWindow(id, m)]),
-      ),
-      locks: activeLocks(id),
-      lock_history: lockHistory(id),
-      phase4_sessions: phaseSessions(id, 4, Date.now() - MASTER_WINDOW_DAYS * 86400000),
+      rank,
+      rolling_windows: Object.fromEntries(moduleIds.map((m, i) => [m, windows[i]!])),
+      locks,
+      lock_history: history,
+      phase4_sessions: phase4,
       now: new Date(),
     }),
   });
 }
 
-api.post('/candidates/:id/daily-log', requireSelf, (req, res) => {
-  const id = ownId(req);
-  loadCandidate(id);
-  res.json(applyDailyTier(id));
-});
+api.post(
+  '/candidates/:id/daily-log',
+  requireSelf,
+  asyncRoute(async (req, res) => {
+    const id = ownId(req);
+    await loadCandidate(id);
+    res.json(await applyDailyTier(id));
+  }),
+);
 
 /* ── Session lifecycle ────────────────────────────────────────────────────── */
 
-function handleSessionNext(req: Request, res: Response): void {
+async function handleSessionNext(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
+  await loadCandidate(id);
 
   const moduleId = String(req.query.module ?? '') as ModuleId;
-  const { plan, recall_of_session, recall_payload } = planFor(id, moduleId, { gated: true });
+  const { plan, recall_of_session, recall_payload } = await planFor(id, moduleId, { gated: true });
 
   res.json({
     plan,
     recall_of_session,
     recall_payload,
-    pcp_summary: pcpSummary(getPcp(id)!),
+    pcp_summary: pcpSummary((await getPcp(id))!),
   });
 }
 
-function pcpSummary(pcp: NonNullable<ReturnType<typeof getPcp>>) {
+function pcpSummary(pcp: Pcp) {
   return {
     vocabulary_band: pcp.vocabulary_band,
     syntax_ceiling: pcp.syntax_ceiling,
@@ -288,10 +300,10 @@ function pcpSummary(pcp: NonNullable<ReturnType<typeof getPcp>>) {
   };
 }
 
-function handleSubmitSession(req: Request, res: Response): void {
+async function handleSubmitSession(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
-  loadCandidate(id);
-  requirePcp(id);
+  await loadCandidate(id);
+  await requirePcp(id);
 
   const moduleId = String(req.body?.module_id ?? '') as ModuleId;
   if (!ALL_MODULE_IDS.includes(moduleId)) throw new HttpError(400, 'unknown module');
@@ -302,12 +314,12 @@ function handleSubmitSession(req: Request, res: Response): void {
   // otherwise a client that skips /session/next could post results directly.
   const descriptor = MODULES[moduleId];
   const required = PHASE_UNLOCK_RANK[descriptor.phase];
-  if (required !== null && !rankAtLeast(currentRank(id), required)) {
+  if (required !== null && !rankAtLeast(await currentRank(id), required)) {
     throw new HttpError(423, `PHASE ${descriptor.phase} LOCKED — requires ${required}`);
   }
 
   const sessionId = String(req.body?.session_id ?? `S-${id}-${moduleId}-${Date.now()}`);
-  const result = processSessionResult(
+  const result = await processSessionResult(
     {
       session_id: sessionId,
       candidate_id: id,
@@ -324,11 +336,11 @@ function handleSubmitSession(req: Request, res: Response): void {
   // Section 13.4: append-only archive, written after the engine has graded.
   // This cannot influence the result above.
   const itemPayloads = Array.isArray(req.body?.item_payloads) ? req.body.item_payloads : [];
-  recordExerciseAttempts(
+  await recordExerciseAttempts(
     buildArchiveRows({ userId: id, sessionId, moduleId, attempts, timestamp: new Date().toISOString(), itemPayloads }),
   );
 
-  res.json({ result, profile: buildCandidateProfile(id) });
+  res.json({ result, profile: await buildCandidateProfile(id) });
 }
 
 /* ── Route table ────────────────────────────────────────────────────────────
@@ -342,7 +354,9 @@ function handleSubmitSession(req: Request, res: Response): void {
 export const userRoutes = Router();
 
 /** Method, session-scoped path, legacy path, handler. */
-const USER_ROUTES: Array<[string, string, string, (req: Request, res: Response) => void]> = [
+const USER_ROUTES: Array<
+  [string, string, string, (req: Request, res: Response) => void | Promise<void>]
+> = [
   ['get', '/calibration', '/candidates/:id/calibration', handleCalibrationStatus],
   ['get', '/calibration/battery', '/candidates/:id/calibration/battery', handleCalibrationBatteryRoute],
   ['get', '/calibration/probe', '/candidates/:id/calibration/probe', handleCalibrationProbe],
@@ -362,23 +376,32 @@ const USER_ROUTES: Array<[string, string, string, (req: Request, res: Response) 
 const requireCandidateSession = [requireAuth, requireRole('candidate')] as const;
 
 for (const [method, path, legacyPath, handler] of USER_ROUTES) {
-  userRoutes[method as 'get'](path, ...requireCandidateSession, handler);
-  api[method as 'get'](legacyPath, requireSelf, handler);
+  const wrapped = asyncRoute(handler);
+  userRoutes[method as 'get'](path, ...requireCandidateSession, wrapped);
+  api[method as 'get'](legacyPath, requireSelf, wrapped);
 }
 
 /* ── Inspection endpoints ─────────────────────────────────────────────────── */
 
-api.get('/candidates/:id/windows', requireSelf, (req, res) => {
-  const id = ownId(req);
-  loadCandidate(id);
-  res.json({ windows: allWindows(id) });
-});
+api.get(
+  '/candidates/:id/windows',
+  requireSelf,
+  asyncRoute(async (req, res) => {
+    const id = ownId(req);
+    await loadCandidate(id);
+    res.json({ windows: await allWindows(id) });
+  }),
+);
 
-api.get('/candidates/:id/locks', requireSelf, (req, res) => {
-  const id = ownId(req);
-  loadCandidate(id);
-  res.json({ active: activeLocks(id), remediation: openRemediations(id) });
-});
+api.get(
+  '/candidates/:id/locks',
+  requireSelf,
+  asyncRoute(async (req, res) => {
+    const id = ownId(req);
+    await loadCandidate(id);
+    res.json({ active: await activeLocks(id), remediation: await openRemediations(id) });
+  }),
+);
 
 /* ── Error handling ───────────────────────────────────────────────────────── */
 

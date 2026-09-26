@@ -63,30 +63,34 @@ function probePcp(candidateId: CandidateId): Pcp {
   };
 }
 
-export function planFor(candidateId: CandidateId, moduleId: ModuleId, options: PlanOptions): PlanResult {
+export async function planFor(
+  candidateId: CandidateId,
+  moduleId: ModuleId,
+  options: PlanOptions,
+): Promise<PlanResult> {
   if (!ALL_MODULE_IDS.includes(moduleId)) throw new HttpError(400, 'unknown module');
   const descriptor = MODULES[moduleId];
 
-  const pcp = options.gated ? requirePcp(candidateId) : getPcp(candidateId) ?? probePcp(candidateId);
+  const pcp = options.gated ? await requirePcp(candidateId) : ((await getPcp(candidateId)) ?? probePcp(candidateId));
 
   if (options.gated) {
-    const rank = currentRank(candidateId);
+    const rank = await currentRank(candidateId);
     const needed = PHASE_UNLOCK_RANK[descriptor.phase];
     if (needed !== null && !rankAtLeast(rank, needed)) {
       throw new HttpError(423, `PHASE ${descriptor.phase} LOCKED — requires ${needed}`);
     }
   }
 
-  const windows = allWindows(candidateId);
-  const window = windows[moduleId] ?? getWindow(candidateId, moduleId) ?? emptyWindow();
-  const locks = activeLocks(candidateId);
-  const sessionIndex = sessionSummaries(candidateId, moduleId, 50).length + 1;
+  const windows = await allWindows(candidateId);
+  const window = windows[moduleId] ?? (await getWindow(candidateId, moduleId)) ?? emptyWindow();
+  const locks = await activeLocks(candidateId);
+  const sessionIndex = (await sessionSummaries(candidateId, moduleId, 50)).length + 1;
 
   // 24h re-presentation for RD, P1_VSF only. A probe never re-presents a scene.
   let delayed: DelayedScenePayload | null = null;
   let recallOf: string | null = null;
   if (options.gated && moduleId === 'P1_VSF') {
-    const cand = delayedRecallCandidate(candidateId);
+    const cand = await delayedRecallCandidate(candidateId);
     if (cand && cand.payload && cand.age_hours >= 24) {
       delayed = cand.payload as DelayedScenePayload;
       recallOf = cand.session_id;

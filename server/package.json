@@ -10,10 +10,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
+    "db:reset": "tsx scripts/resetDb.ts",
     "e2e": "tsx scripts/e2e.ts",
     "e2e:serve": "cross-env SEED_DEMO=1 node dist/src/index.js"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.2"

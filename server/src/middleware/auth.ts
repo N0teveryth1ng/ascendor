@@ -15,9 +15,16 @@ declare global {
 
 /** Attaches req.user when a valid session cookie is present. Never rejects. */
 export function attachUser(req: Request, _res: Response, next: NextFunction): void {
-  const user = resolveSession(sessionToken(req));
-  if (user) req.user = user;
-  next();
+  // A session lookup is a database round trip now, so resolution is deferred
+  // to the microtask queue and the request is parked rather than blocking the
+  // event loop. `next` is called from the continuation, not synchronously.
+  void resolveSession(sessionToken(req)).then(
+    (user) => {
+      if (user) req.user = user;
+      next();
+    },
+    () => next(),
+  );
 }
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction): void {

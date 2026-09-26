@@ -19,14 +19,17 @@ const INITIAL_THRESHOLD = 2400;
 
 /* ── Candidates ───────────────────────────────────────────────────────────── */
 
-export function createCandidate(id: CandidateId, displayName: string): void {
-  getDb()
-    .prepare('INSERT OR REPLACE INTO candidates (candidate_id, display_name, created_at) VALUES (?, ?, ?)')
+export async function createCandidate(id: CandidateId, displayName: string): Promise<void> {
+  await getDb()
+    .prepare(
+      `INSERT INTO candidates (candidate_id, display_name, created_at) VALUES (?, ?, ?)
+       ON CONFLICT (candidate_id) DO UPDATE SET display_name = EXCLUDED.display_name`,
+    )
     .run(id, displayName, nowIso());
 }
 
-export function listCandidates(): { candidate_id: string; display_name: string; created_at: string; calibrated: number }[] {
-  const rows = getDb()
+export async function listCandidates(): Promise<{ candidate_id: string; display_name: string; created_at: string; calibrated: number }[]> {
+  const rows = await getDb()
     .prepare(
       `SELECT c.candidate_id, c.display_name, c.created_at,
               CASE WHEN p.candidate_id IS NULL THEN 0 ELSE 1 END AS calibrated
@@ -38,22 +41,22 @@ export function listCandidates(): { candidate_id: string; display_name: string; 
   return plainAll(rows);
 }
 
-export function candidateExists(id: CandidateId): boolean {
-  const r = getDb().prepare('SELECT 1 AS ok FROM candidates WHERE candidate_id = ?').get(id);
+export async function candidateExists(id: CandidateId): Promise<boolean> {
+  const r = await getDb().prepare('SELECT 1 AS ok FROM candidates WHERE candidate_id = ?').get(id);
   return r !== undefined && r !== null;
 }
 
-export function candidateName(id: CandidateId): string | null {
+export async function candidateName(id: CandidateId): Promise<string | null> {
   const r = plain<{ display_name: string }>(
-    getDb().prepare('SELECT display_name FROM candidates WHERE candidate_id = ?').get(id),
+    await getDb().prepare('SELECT display_name FROM candidates WHERE candidate_id = ?').get(id),
   );
   return r?.display_name ?? null;
 }
 
 /* ── PCP ──────────────────────────────────────────────────────────────────── */
 
-export function savePcp(pcp: Pcp): void {
-  getDb()
+export async function savePcp(pcp: Pcp): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO pcp (candidate_id, calibration_date, vocabulary_band, syntax_ceiling,
                         baseline_reflex_latency_ms, baseline_vocal_clarity, typo_vulnerability_index,
@@ -87,8 +90,8 @@ export function savePcp(pcp: Pcp): void {
     );
 }
 
-export function getPcp(candidateId: CandidateId): Pcp | null {
-  const row = plain<Row>(getDb().prepare('SELECT * FROM pcp WHERE candidate_id = ?').get(candidateId));
+export async function getPcp(candidateId: CandidateId): Promise<Pcp | null> {
+  const row = plain<Row>(await getDb().prepare('SELECT * FROM pcp WHERE candidate_id = ?').get(candidateId));
   if (!row) return null;
   return {
     candidate_id: row.candidate_id as string,
@@ -112,7 +115,7 @@ export function getPcp(candidateId: CandidateId): Pcp | null {
   };
 }
 
-export function insertCalibrationPass(args: {
+export async function insertCalibrationPass(args: {
   candidateId: CandidateId;
   vector: string;
   passType: 'untimed' | 'timed';
@@ -121,8 +124,8 @@ export function insertCalibrationPass(args: {
   thresholdMs: number;
   wpm: number | null;
   details: unknown;
-}): void {
-  getDb()
+}): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO calibration_passes
          (candidate_id, vector, pass_type, started_at, completed_at, accuracy_pct, mean_latency_ms, threshold_ms, wpm, details)
@@ -144,8 +147,8 @@ export function insertCalibrationPass(args: {
 
 /* ── Metrics ──────────────────────────────────────────────────────────────── */
 
-export function getMetrics(candidateId: CandidateId): Metrics {
-  const row = plain<Row>(getDb().prepare('SELECT * FROM metrics WHERE candidate_id = ?').get(candidateId));
+export async function getMetrics(candidateId: CandidateId): Promise<Metrics> {
+  const row = plain<Row>(await getDb().prepare('SELECT * FROM metrics WHERE candidate_id = ?').get(candidateId));
   if (!row) return { ...EMPTY_METRICS };
   return {
     precision_index: Number(row.precision_index),
@@ -156,13 +159,13 @@ export function getMetrics(candidateId: CandidateId): Metrics {
   };
 }
 
-export function getMetricProvenance(candidateId: CandidateId): Record<string, unknown> {
-  const row = plain<Row>(getDb().prepare('SELECT provenance FROM metrics WHERE candidate_id = ?').get(candidateId));
+export async function getMetricProvenance(candidateId: CandidateId): Promise<Record<string, unknown>> {
+  const row = plain<Row>(await getDb().prepare('SELECT provenance FROM metrics WHERE candidate_id = ?').get(candidateId));
   return parseJson<Record<string, unknown>>(row?.provenance, { rd_provisional: true, sessions_in_rl_window: 0 });
 }
 
-export function upsertMetrics(candidateId: CandidateId, m: Metrics, provenance: unknown): void {
-  getDb()
+export async function upsertMetrics(candidateId: CandidateId, m: Metrics, provenance: unknown): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO metrics (candidate_id, precision_index, reflex_latency_pct_of_baseline,
                             retention_density, vocal_clarity_delta, pattern_intuition, provenance, updated_at)
@@ -186,23 +189,23 @@ export function upsertMetrics(candidateId: CandidateId, m: Metrics, provenance: 
       JSON.stringify(provenance),
       nowIso(),
     );
-  getDb()
+  await getDb()
     .prepare('INSERT INTO metric_history (candidate_id, metrics, at) VALUES (?, ?, ?)')
     .run(candidateId, JSON.stringify(m), nowIso());
 }
 
-export function metricHistory(candidateId: CandidateId, limit = 20): Partial<Metrics>[] {
+export async function metricHistory(candidateId: CandidateId, limit = 20): Promise<Partial<Metrics>[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT metrics FROM metric_history WHERE candidate_id = ? ORDER BY id DESC LIMIT ?')
       .all(candidateId, limit),
   );
   return rows.map((r) => parseJson<Partial<Metrics>>(r.metrics, {})).reverse();
 }
 
-export function getFloors(candidateId: CandidateId): { floors: MetricFloors; baseline: Metrics } {
+export async function getFloors(candidateId: CandidateId): Promise<{ floors: MetricFloors; baseline: Metrics }> {
   const row = plain<Row>(
-    getDb().prepare('SELECT floors, capability_baseline FROM metric_floors WHERE candidate_id = ?').get(candidateId),
+    await getDb().prepare('SELECT floors, capability_baseline FROM metric_floors WHERE candidate_id = ?').get(candidateId),
   );
   if (!row) {
     return {
@@ -216,8 +219,8 @@ export function getFloors(candidateId: CandidateId): { floors: MetricFloors; bas
   };
 }
 
-export function upsertFloors(candidateId: CandidateId, floors: MetricFloors, baseline: Metrics): void {
-  getDb()
+export async function upsertFloors(candidateId: CandidateId, floors: MetricFloors, baseline: Metrics): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO metric_floors (candidate_id, floors, capability_baseline, updated_at)
        VALUES (?, ?, ?, ?)
@@ -252,36 +255,38 @@ export interface InsertSessionArgs {
   items: { item_id: string; payload: unknown }[];
 }
 
-export function insertSession(a: InsertSessionArgs): void {
+export async function insertSession(a: InsertSessionArgs): Promise<void> {
   const charCorrect = a.attempts.reduce((s, x) => s + x.correct_chars, 0);
   const charTotal = a.attempts.reduce((s, x) => s + x.counted_chars, 0);
-  tx((d) => {
-    d.prepare(
-      `INSERT INTO sessions
-         (session_id, candidate_id, module_id, phase, block_id, sublevel, started_at, ended_at,
-          accuracy_pct, mean_latency_ms, threshold_ms, speed_multiplier, char_correct, char_total,
-          errors, ape, is_delayed_recall, recall_of_session)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      a.sessionId,
-      a.candidateId,
-      a.moduleId,
-      MODULES[a.moduleId].phase,
-      a.blockId,
-      a.sublevel,
-      a.startedAt,
-      a.endedAt,
-      a.accuracyPct,
-      a.meanLatencyMs,
-      a.thresholdMs,
-      a.speedMultiplier,
-      charCorrect,
-      charTotal,
-      JSON.stringify(a.errors),
-      JSON.stringify(a.ape),
-      a.isDelayedRecall ? 1 : 0,
-      a.recallOfSession,
-    );
+  await tx(async (d) => {
+    await d
+      .prepare(
+        `INSERT INTO sessions
+           (session_id, candidate_id, module_id, phase, block_id, sublevel, started_at, ended_at,
+            accuracy_pct, mean_latency_ms, threshold_ms, speed_multiplier, char_correct, char_total,
+            errors, ape, is_delayed_recall, recall_of_session)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        a.sessionId,
+        a.candidateId,
+        a.moduleId,
+        MODULES[a.moduleId].phase,
+        a.blockId,
+        a.sublevel,
+        a.startedAt,
+        a.endedAt,
+        a.accuracyPct,
+        a.meanLatencyMs,
+        a.thresholdMs,
+        a.speedMultiplier,
+        charCorrect,
+        charTotal,
+        JSON.stringify(a.errors),
+        JSON.stringify(a.ape),
+        a.isDelayedRecall ? 1 : 0,
+        a.recallOfSession,
+      );
 
     const attStmt = d.prepare(
       `INSERT INTO session_attempts
@@ -290,8 +295,10 @@ export function insertSession(a: InsertSessionArgs): void {
           correct_chars, slot_category, delayed_recall, clarity_score)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    a.attempts.forEach((at, i) => {
-      attStmt.run(
+    // Sequential, not forEach: each run is a round trip inside one transaction,
+    // so an unawaited one would resolve after the commit and be lost.
+    for (const [i, at] of a.attempts.entries()) {
+      await attStmt.run(
         a.sessionId,
         a.candidateId,
         a.moduleId,
@@ -312,28 +319,28 @@ export function insertSession(a: InsertSessionArgs): void {
         at.delayed_recall ? 1 : 0,
         at.clarity_score ?? null,
       );
-    });
+    }
 
     const itemStmt = d.prepare(
       `INSERT INTO session_items (session_id, candidate_id, module_id, item_id, payload, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     );
     for (const it of a.items) {
-      itemStmt.run(a.sessionId, a.candidateId, a.moduleId, it.item_id, JSON.stringify(it.payload), nowIso());
+      await itemStmt.run(a.sessionId, a.candidateId, a.moduleId, it.item_id, JSON.stringify(it.payload), nowIso());
     }
   });
 }
 
-export function getSession(sessionId: string): Row | null {
-  return plain<Row>(getDb().prepare('SELECT * FROM sessions WHERE session_id = ?').get(sessionId));
+export async function getSession(sessionId: string): Promise<Row | null> {
+  return plain<Row>(await getDb().prepare('SELECT * FROM sessions WHERE session_id = ?').get(sessionId));
 }
 
-export function listSessions(
+export async function listSessions(
   candidateId: CandidateId,
   limit = 50,
-): { session_id: string; module_id: string; sublevel: number; started_at: string; accuracy_pct: number; mean_latency_ms: number; threshold_ms: number }[] {
+): Promise<{ session_id: string; module_id: string; sublevel: number; started_at: string; accuracy_pct: number; mean_latency_ms: number; threshold_ms: number }[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT session_id, module_id, sublevel, started_at, accuracy_pct, mean_latency_ms, threshold_ms
          FROM sessions WHERE candidate_id = ? ORDER BY started_at DESC LIMIT ?`,
@@ -351,18 +358,18 @@ export function listSessions(
   }));
 }
 
-export function phaseSessions(candidateId: CandidateId, phase: number, sinceMs: number): { started_at: string; accuracy_pct: number }[] {
+export async function phaseSessions(candidateId: CandidateId, phase: number, sinceMs: number): Promise<{ started_at: string; accuracy_pct: number }[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT started_at, accuracy_pct FROM sessions WHERE candidate_id = ? AND phase = ? AND started_at >= ?')
       .all(candidateId, phase, new Date(sinceMs).toISOString()),
   );
   return rows.map((r) => ({ started_at: r.started_at as string, accuracy_pct: Number(r.accuracy_pct) }));
 }
 
-export function dailyAggregate(candidateId: CandidateId, date: string): { aggregate_pct: number; sessions: number } {
+export async function dailyAggregate(candidateId: CandidateId, date: string): Promise<{ aggregate_pct: number; sessions: number }> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT accuracy_pct FROM sessions
          WHERE candidate_id = ? AND substr(started_at, 1, 10) = ?`,
@@ -374,9 +381,9 @@ export function dailyAggregate(candidateId: CandidateId, date: string): { aggreg
   return { aggregate_pct: Math.round((total / rows.length) * 100) / 100, sessions: rows.length };
 }
 
-export function modulesBelowBandToday(candidateId: CandidateId, date: string): ModuleId[] {
+export async function modulesBelowBandToday(candidateId: CandidateId, date: string): Promise<ModuleId[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT module_id, accuracy_pct FROM sessions
          WHERE candidate_id = ? AND substr(started_at, 1, 10) = ?`,
@@ -393,12 +400,12 @@ export function modulesBelowBandToday(candidateId: CandidateId, date: string): M
 
 /* ── Delayed recall sources (Section 3, RD weighting) ────────────────────── */
 
-export function delayedRecallCandidate(
+export async function delayedRecallCandidate(
   candidateId: CandidateId,
-): { session_id: string; payload: unknown; age_hours: number } | null {
+): Promise<{ session_id: string; payload: unknown; age_hours: number } | null> {
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT s.session_id, s.recall_of_session, si.payload, si.created_at
          FROM sessions s
@@ -424,30 +431,32 @@ export function delayedRecallCandidate(
 
 /* ── Rolling windows ──────────────────────────────────────────────────────── */
 
-export function getWindow(candidateId: CandidateId, moduleId: ModuleId): RollingWindow {
+export async function getWindow(candidateId: CandidateId, moduleId: ModuleId): Promise<RollingWindow> {
   const row = plain<Row>(
-    getDb().prepare('SELECT window FROM rolling_windows WHERE candidate_id = ? AND module_id = ?').get(candidateId, moduleId),
+    await getDb()
+      .prepare('SELECT window_json FROM rolling_windows WHERE candidate_id = ? AND module_id = ?')
+      .get(candidateId, moduleId),
   );
   if (!row) return emptyWindow();
-  return parseJson<RollingWindow>(row.window, emptyWindow());
+  return parseJson<RollingWindow>(row.window_json, emptyWindow());
 }
 
-export function allWindows(candidateId: CandidateId): Record<string, RollingWindow> {
+export async function allWindows(candidateId: CandidateId): Promise<Record<string, RollingWindow>> {
   const rows = plainAll<Row>(
-    getDb().prepare('SELECT module_id, window FROM rolling_windows WHERE candidate_id = ?').all(candidateId),
+    await getDb().prepare('SELECT module_id, window_json FROM rolling_windows WHERE candidate_id = ?').all(candidateId),
   );
   const out: Record<string, RollingWindow> = {};
-  for (const r of rows) out[r.module_id as string] = parseJson<RollingWindow>(r.window, emptyWindow());
+  for (const r of rows) out[r.module_id as string] = parseJson<RollingWindow>(r.window_json, emptyWindow());
   return out;
 }
 
-export function saveWindow(candidateId: CandidateId, moduleId: ModuleId, window: RollingWindow): void {
-  getDb()
+export async function saveWindow(candidateId: CandidateId, moduleId: ModuleId, window: RollingWindow): Promise<void> {
+  await getDb()
     .prepare(
-      `INSERT INTO rolling_windows (candidate_id, module_id, window, updated_at)
+      `INSERT INTO rolling_windows (candidate_id, module_id, window_json, updated_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(candidate_id, module_id) DO UPDATE SET
-         window = excluded.window, updated_at = excluded.updated_at`,
+         window_json = excluded.window_json, updated_at = excluded.updated_at`,
     )
     .run(candidateId, moduleId, JSON.stringify(window), nowIso());
 }
@@ -465,20 +474,24 @@ export function emptyWindow(): RollingWindow {
   };
 }
 
-export function initialiseWindows(candidateId: CandidateId, seed: number, sublevels: Record<string, number>): void {
+export async function initialiseWindows(
+  candidateId: CandidateId,
+  seed: number,
+  sublevels: Record<string, number>,
+): Promise<void> {
   for (const id of ALL_MODULE_IDS) {
     const w = emptyWindow();
     // Phase-gated modules start unlocked but keep a neutral window; the APE
     // never reads them until the phase unlocks.
     w.current_threshold_ms = seed;
     w.sublevel = sublevels[id] ?? 1;
-    saveWindow(candidateId, id, w);
+    await saveWindow(candidateId, id, w);
   }
 }
 
-export function sessionSummaries(candidateId: CandidateId, moduleId: ModuleId, limit = 8): SessionSummary[] {
+export async function sessionSummaries(candidateId: CandidateId, moduleId: ModuleId, limit = 8): Promise<SessionSummary[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT session_id, started_at, module_id, sublevel, accuracy_pct, mean_latency_ms, errors
          FROM sessions WHERE candidate_id = ? AND module_id = ?
@@ -501,9 +514,9 @@ export function sessionSummaries(candidateId: CandidateId, moduleId: ModuleId, l
 
 /* ── Error counters (Section 11: load-bearing) ────────────────────────────── */
 
-export function getErrorCounters(candidateId: CandidateId, moduleId: ModuleId): Record<string, number> {
+export async function getErrorCounters(candidateId: CandidateId, moduleId: ModuleId): Promise<Record<string, number>> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT tag, sessions_flagged FROM error_counters WHERE candidate_id = ? AND module_id = ?')
       .all(candidateId, moduleId),
   );
@@ -512,12 +525,12 @@ export function getErrorCounters(candidateId: CandidateId, moduleId: ModuleId): 
   return out;
 }
 
-export function saveErrorCounters(
+export async function saveErrorCounters(
   candidateId: CandidateId,
   moduleId: ModuleId,
   counters: Record<string, number>,
-): void {
-  const stmt = getDb().prepare(
+): Promise<void> {
+  const stmt = await getDb().prepare(
     `INSERT INTO error_counters (candidate_id, module_id, tag, sessions_flagged, updated_at)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(candidate_id, module_id, tag) DO UPDATE SET
@@ -525,20 +538,20 @@ export function saveErrorCounters(
   );
   for (const [tag, n] of Object.entries(counters)) {
     if (n <= 0) continue;
-    stmt.run(candidateId, moduleId, tag, n, nowIso());
+    await stmt.run(candidateId, moduleId, tag, n, nowIso());
   }
 }
 
-export function clearErrorCounter(candidateId: CandidateId, moduleId: ModuleId, tag: string): void {
-  getDb()
+export async function clearErrorCounter(candidateId: CandidateId, moduleId: ModuleId, tag: string): Promise<void> {
+  await getDb()
     .prepare('DELETE FROM error_counters WHERE candidate_id = ? AND module_id = ? AND tag = ?')
     .run(candidateId, moduleId, tag);
 }
 
 /* ── Structural locks ─────────────────────────────────────────────────────── */
 
-export function insertLock(candidateId: CandidateId, lock: StructuralLock): void {
-  getDb()
+export async function insertLock(candidateId: CandidateId, lock: StructuralLock): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO structural_locks
          (candidate_id, module_id, tag, sessions_flagged, remediation_active, triggered_at,
@@ -559,15 +572,17 @@ export function insertLock(candidateId: CandidateId, lock: StructuralLock): void
     );
 }
 
-export function clearLock(lockId: number, at: string): void {
-  getDb()
+export async function clearLock(lockId: number, at: string): Promise<void> {
+  await getDb()
     .prepare('UPDATE structural_locks SET remediation_active = 0, cleared_at = ? WHERE id = ?')
     .run(at, lockId);
 }
 
-export function decrementLockSessions(lockId: number): void {
-  getDb()
-    .prepare('UPDATE structural_locks SET sessions_remaining = MAX(0, sessions_remaining - 1) WHERE id = ?')
+export async function decrementLockSessions(lockId: number): Promise<void> {
+  await getDb()
+    // GREATEST, not MAX: SQLite's two-argument scalar max() has no Postgres
+    // equivalent, where max() is a single-argument aggregate.
+    .prepare('UPDATE structural_locks SET sessions_remaining = GREATEST(0, sessions_remaining - 1) WHERE id = ?')
     .run(lockId);
 }
 
@@ -598,25 +613,25 @@ function toLock(r: LockRow): StructuralLock {
   };
 }
 
-export function activeLocks(candidateId: CandidateId): StructuralLock[] {
+export async function activeLocks(candidateId: CandidateId): Promise<StructuralLock[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT * FROM structural_locks WHERE candidate_id = ? AND remediation_active = 1')
       .all(candidateId),
   );
   return (rows as LockRow[]).map(toLock);
 }
 
-export function lockHistory(candidateId: CandidateId): StructuralLock[] {
+export async function lockHistory(candidateId: CandidateId): Promise<StructuralLock[]> {
   const rows = plainAll<Row>(
-    getDb().prepare('SELECT * FROM structural_locks WHERE candidate_id = ?').all(candidateId),
+    await getDb().prepare('SELECT * FROM structural_locks WHERE candidate_id = ?').all(candidateId),
   );
   return (rows as LockRow[]).map(toLock);
 }
 
-export function activeLockRows(candidateId: CandidateId): LockRow[] {
+export async function activeLockRows(candidateId: CandidateId): Promise<LockRow[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT * FROM structural_locks WHERE candidate_id = ? AND remediation_active = 1')
       .all(candidateId),
   );
@@ -625,8 +640,8 @@ export function activeLockRows(candidateId: CandidateId): LockRow[] {
 
 /* ── Streak & daily log ───────────────────────────────────────────────────── */
 
-export function getStreak(candidateId: CandidateId): { current: number; multiplier: number; last_date: string | null; best: number } {
-  const r = plain<Row>(getDb().prepare('SELECT * FROM streaks WHERE candidate_id = ?').get(candidateId));
+export async function getStreak(candidateId: CandidateId): Promise<{ current: number; multiplier: number; last_date: string | null; best: number }> {
+  const r = plain<Row>(await getDb().prepare('SELECT * FROM streaks WHERE candidate_id = ?').get(candidateId));
   return {
     current: Number(r?.current ?? 0),
     multiplier: Number(r?.multiplier ?? 1),
@@ -635,8 +650,8 @@ export function getStreak(candidateId: CandidateId): { current: number; multipli
   };
 }
 
-export function saveStreak(candidateId: CandidateId, s: { current: number; multiplier: number; last_date: string | null; best: number }): void {
-  getDb()
+export async function saveStreak(candidateId: CandidateId, s: { current: number; multiplier: number; last_date: string | null; best: number }): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO streaks (candidate_id, current, multiplier, last_date, best)
        VALUES (?, ?, ?, ?, ?)
@@ -647,7 +662,7 @@ export function saveStreak(candidateId: CandidateId, s: { current: number; multi
     .run(candidateId, s.current, s.multiplier, s.last_date, s.best);
 }
 
-export function insertDailyLog(entry: {
+export async function insertDailyLog(entry: {
   candidateId: CandidateId;
   date: string;
   aggregatePct: number;
@@ -657,8 +672,8 @@ export function insertDailyLog(entry: {
   multiplierAfter: number;
   modulesFailed: ModuleId[];
   forcedRepeat: boolean;
-}): void {
-  getDb()
+}): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO daily_log
          (candidate_id, date, aggregate_pct, tier, streak_before, streak_after, multiplier_after,
@@ -696,16 +711,16 @@ export interface DailyLogRow extends Row {
   recorded_at: string;
 }
 
-export function dailyLog(candidateId: CandidateId, limit = 30): DailyLogRow[] {
+export async function dailyLog(candidateId: CandidateId, limit = 30): Promise<DailyLogRow[]> {
   return plainAll(
-    getDb()
+    await getDb()
       .prepare('SELECT * FROM daily_log WHERE candidate_id = ? ORDER BY id DESC LIMIT ?')
       .all(candidateId, limit),
   ) as DailyLogRow[];
 }
 
-export function dailyLogExists(candidateId: CandidateId, date: string): boolean {
-  const r = getDb()
+export async function dailyLogExists(candidateId: CandidateId, date: string): Promise<boolean> {
+  const r = await getDb()
     .prepare('SELECT 1 AS ok FROM daily_log WHERE candidate_id = ? AND date = ?')
     .get(candidateId, date);
   return r !== undefined && r !== null;
@@ -713,35 +728,35 @@ export function dailyLogExists(candidateId: CandidateId, date: string): boolean 
 
 /* ── Rank history & pending remediation ───────────────────────────────────── */
 
-export function currentRank(candidateId: CandidateId): Rank {
+export async function currentRank(candidateId: CandidateId): Promise<Rank> {
   const r = plain<Row>(
-    getDb()
+    await getDb()
       .prepare('SELECT rank FROM rank_history WHERE candidate_id = ? ORDER BY id DESC LIMIT 1')
       .get(candidateId),
   );
   return (r?.rank as Rank | undefined) ?? 'RANK 03: DECODER';
 }
 
-export function insertRank(candidateId: CandidateId, rank: Rank): void {
-  getDb()
+export async function insertRank(candidateId: CandidateId, rank: Rank): Promise<void> {
+  await getDb()
     .prepare('INSERT INTO rank_history (candidate_id, rank, at) VALUES (?, ?, ?)')
     .run(candidateId, rank, nowIso());
 }
 
-export function rankHistory(candidateId: CandidateId): { rank: Rank; at: string }[] {
+export async function rankHistory(candidateId: CandidateId): Promise<{ rank: Rank; at: string }[]> {
   const rows = plainAll<Row>(
-    getDb().prepare('SELECT rank, at FROM rank_history WHERE candidate_id = ? ORDER BY id').all(candidateId),
+    await getDb().prepare('SELECT rank, at FROM rank_history WHERE candidate_id = ? ORDER BY id').all(candidateId),
   );
   return rows.map((r) => ({ rank: r.rank as Rank, at: r.at as string }));
 }
 
-export function addPendingRemediation(
+export async function addPendingRemediation(
   candidateId: CandidateId,
   moduleId: ModuleId,
   sourceSession: string | null,
   reason: string,
-): void {
-  getDb()
+): Promise<void> {
+  await getDb()
     .prepare(
       `INSERT INTO pending_remediation (candidate_id, module_id, scheduled_at, source_session, reason)
        VALUES (?, ?, ?, ?, ?)`,
@@ -749,9 +764,9 @@ export function addPendingRemediation(
     .run(candidateId, moduleId, nowIso(), sourceSession, reason);
 }
 
-export function openRemediations(candidateId: CandidateId): ModuleId[] {
+export async function openRemediations(candidateId: CandidateId): Promise<ModuleId[]> {
   const rows = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         'SELECT DISTINCT module_id FROM pending_remediation WHERE candidate_id = ? AND completed_at IS NULL',
       )
@@ -760,8 +775,8 @@ export function openRemediations(candidateId: CandidateId): ModuleId[] {
   return rows.map((r) => r.module_id as ModuleId);
 }
 
-export function completeRemediations(candidateId: CandidateId, moduleId: ModuleId): void {
-  getDb()
+export async function completeRemediations(candidateId: CandidateId, moduleId: ModuleId): Promise<void> {
+  await getDb()
     .prepare(
       `UPDATE pending_remediation SET completed_at = ?
        WHERE candidate_id = ? AND module_id = ? AND completed_at IS NULL`,
@@ -779,9 +794,9 @@ export interface SessionAttemptGroup {
   attempts: Attempt[];
 }
 
-export function recentAttemptGroups(candidateId: CandidateId, limit = 8): SessionAttemptGroup[] {
+export async function recentAttemptGroups(candidateId: CandidateId, limit = 8): Promise<SessionAttemptGroup[]> {
   const sessions = plainAll<Row>(
-    getDb()
+    await getDb()
       .prepare(
         `SELECT session_id, started_at, module_id, accuracy_pct
          FROM sessions WHERE candidate_id = ? ORDER BY started_at DESC LIMIT ?`,
@@ -789,50 +804,56 @@ export function recentAttemptGroups(candidateId: CandidateId, limit = 8): Sessio
       .all(candidateId, limit),
   );
   if (!sessions.length) return [];
-  const stmt = getDb().prepare(
+  const stmt = await getDb().prepare(
     `SELECT item_id, item_kind, correct, input, expected, latency_ms, error_code, error_category,
             char_position, latency_delta_ms, counted_chars, correct_chars, slot_category,
             delayed_recall, clarity_score
      FROM session_attempts WHERE session_id = ? ORDER BY position`,
   );
-  return sessions
-    .map((s) => {
-      const rows = plainAll<Row>(stmt.all(s.session_id as string));
-      return {
-        session_id: s.session_id as string,
-        started_at: s.started_at as string,
-        module_id: s.module_id as ModuleId,
-        accuracy_pct: Number(s.accuracy_pct),
-        attempts: rows.map(
-          (r): Attempt => ({
-            item_id: r.item_id as string,
-            item_kind: r.item_kind as string,
-            correct: Number(r.correct) === 1,
-            input: (r.input as string | null) ?? null,
-            expected: (r.expected as string | null) ?? null,
-            latency_ms: Number(r.latency_ms),
-            error_code: r.error_code as Attempt['error_code'],
-            error_category: (r.error_category as string | null) ?? null,
-            char_position: r.char_position === null ? null : Number(r.char_position),
-            latency_delta_ms: r.latency_delta_ms === null ? null : Number(r.latency_delta_ms),
-            counted_chars: Number(r.counted_chars),
-            correct_chars: Number(r.correct_chars),
-            slot_category: (r.slot_category as string | null) ?? null,
-            delayed_recall: Number(r.delayed_recall) === 1,
-            clarity_score: r.clarity_score === null ? null : Number(r.clarity_score),
-          }),
-        ),
-      };
-    })
-    .reverse();
+  return (
+    await Promise.all(
+      sessions.map(async (s) => {
+        const rows = plainAll<Row>(await stmt.all(s.session_id as string));
+        return {
+          session_id: s.session_id as string,
+          started_at: s.started_at as string,
+          module_id: s.module_id as ModuleId,
+          accuracy_pct: Number(s.accuracy_pct),
+          attempts: rows.map(
+            (r): Attempt => ({
+              item_id: r.item_id as string,
+              item_kind: r.item_kind as string,
+              correct: Number(r.correct) === 1,
+              input: (r.input as string | null) ?? null,
+              expected: (r.expected as string | null) ?? null,
+              latency_ms: Number(r.latency_ms),
+              error_code: r.error_code as Attempt['error_code'],
+              error_category: (r.error_category as string | null) ?? null,
+              char_position: r.char_position === null ? null : Number(r.char_position),
+              latency_delta_ms: r.latency_delta_ms === null ? null : Number(r.latency_delta_ms),
+              counted_chars: Number(r.counted_chars),
+              correct_chars: Number(r.correct_chars),
+              slot_category: (r.slot_category as string | null) ?? null,
+              delayed_recall: Number(r.delayed_recall) === 1,
+              clarity_score: r.clarity_score === null ? null : Number(r.clarity_score),
+            }),
+          ),
+        };
+      }),
+    )
+  ).reverse();
 }
 
-export function bootstrapCandidate(candidateId: CandidateId, floors: MetricFloors, seedMetrics: Metrics): void {
-  tx(() => {
-    upsertMetrics(candidateId, seedMetrics, { rd_provisional: true, sessions_in_rl_window: 0, updated_at: nowIso() });
-    upsertFloors(candidateId, floors, seedMetrics);
-    saveStreak(candidateId, { current: 0, multiplier: 1, last_date: null, best: 0 });
-    insertRank(candidateId, 'RANK 03: DECODER');
+export async function bootstrapCandidate(
+  candidateId: CandidateId,
+  floors: MetricFloors,
+  seedMetrics: Metrics,
+): Promise<void> {
+  await tx(async () => {
+    await upsertMetrics(candidateId, seedMetrics, { rd_provisional: true, sessions_in_rl_window: 0, updated_at: nowIso() });
+    await upsertFloors(candidateId, floors, seedMetrics);
+    await saveStreak(candidateId, { current: 0, multiplier: 1, last_date: null, best: 0 });
+    await insertRank(candidateId, 'RANK 03: DECODER');
   });
 }
 

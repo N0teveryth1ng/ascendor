@@ -32,17 +32,17 @@ export interface ExerciseAttemptInput {
   created_at: string;
 }
 
-export function recordExerciseAttempts(rows: ExerciseAttemptInput[]): number {
+export async function recordExerciseAttempts(rows: ExerciseAttemptInput[]): Promise<number> {
   if (rows.length === 0) return 0;
   const db = getDb();
-  const stmt = db.prepare(
+  const stmt = await db.prepare(
     `INSERT INTO exercise_attempts
        (user_id, module_id, exercise_id, question_shown, answer_given, correct_answer,
         is_correct, response_time_ms, error_tag, hidden_metrics_delta, session_id, position, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const r of rows) {
-    stmt.run(
+    await stmt.run(
       r.user_id,
       r.module_id,
       r.exercise_id,

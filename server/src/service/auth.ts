@@ -59,13 +59,13 @@ export interface CreateUserInput {
   avatar?: string | null;
 }
 
-export function createUser(input: CreateUserInput): UserRow {
+export async function createUser(input: CreateUserInput): Promise<UserRow> {
   const db = getDb();
   const email = input.email.trim().toLowerCase();
   if (!email.includes('@')) throw new HttpError(400, 'Enter a valid email address.');
   if (input.password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
 
-  const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(email);
+  const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = $1').get(email);
   if (existing) throw new HttpError(409, 'An account with that email already exists.');
 
   const now = new Date().toISOString();
@@ -80,78 +80,87 @@ export function createUser(input: CreateUserInput): UserRow {
     created_at: now,
   };
 
-  db.prepare(
-    `INSERT INTO users (id, email, password_hash, display_name, avatar, role, timezone, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(row.id, row.email, row.password_hash, row.display_name, row.avatar, row.role, row.timezone, row.created_at);
+  await db
+    .prepare(
+      `INSERT INTO users (id, email, password_hash, display_name, avatar, role, timezone, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(row.id, row.email, row.password_hash, row.display_name, row.avatar, row.role, row.timezone, row.created_at);
 
   if (row.role === 'candidate') {
-    db.prepare('INSERT OR IGNORE INTO candidates (candidate_id, display_name, created_at) VALUES (?, ?, ?)').run(
-      row.id,
-      row.display_name,
-      now,
-    );
+    await db
+      .prepare(
+        `INSERT INTO candidates (candidate_id, display_name, created_at) VALUES (?, ?, ?)
+         ON CONFLICT (candidate_id) DO UPDATE SET display_name = EXCLUDED.display_name`,
+      )
+      .run(row.id, row.display_name, now);
   }
   return row;
 }
 
-export function findUserByEmail(email: string): UserRow | null {
+export async function findUserByEmail(email: string): Promise<UserRow | null> {
   const db = getDb();
-  const r = db.prepare('SELECT * FROM users WHERE lower(email) = ?').get(email.trim().toLowerCase());
+  const r = await db.prepare('SELECT * FROM users WHERE lower(email) = $1').get(email.trim().toLowerCase());
   return plain<UserRow>(r);
 }
 
-export function findUserById(id: string): UserRow | null {
+export async function findUserById(id: string): Promise<UserRow | null> {
   const db = getDb();
-  return plain<UserRow>(db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+  return plain<UserRow>(await db.prepare('SELECT * FROM users WHERE id = $1').get(id));
 }
 
-export function listUsers(): UserRow[] {
+export async function listUsers(): Promise<UserRow[]> {
   const db = getDb();
-  return plainAll<UserRow>(db.prepare('SELECT * FROM users ORDER BY created_at').all() as unknown[]);
+  return plainAll<UserRow>((await db.prepare('SELECT * FROM users ORDER BY created_at').all()) as unknown[]);
 }
 
-export function authenticate(email: string, password: string): UserRow {
-  const user = findUserByEmail(email);
+export async function authenticate(email: string, password: string): Promise<UserRow> {
+  const user = await findUserByEmail(email);
   if (!user || !verifyPassword(password, user.password_hash)) {
     throw new HttpError(401, 'That email and password combination did not work.');
   }
   return user;
 }
 
-export function issueSession(userId: string, userAgent?: string | null): { token: string; expiresAt: string } {
+export async function issueSession(userId: string, userAgent?: string | null): Promise<{ token: string; expiresAt: string }> {
   const db = getDb();
   const token = randomBytes(32).toString('base64url');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
-  db.prepare(
-    'INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?)',
-  ).run(hashToken(token), userId, now.toISOString(), expiresAt, userAgent ?? null);
+  await db
+    .prepare(
+      'INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(hashToken(token), userId, now.toISOString(), expiresAt, userAgent ?? null);
   return { token, expiresAt };
 }
 
-export function resolveSession(token: string | undefined): UserRow | null {
+export async function resolveSession(token: string | undefined): Promise<UserRow | null> {
   if (!token) return null;
   const db = getDb();
-  const row = plain<SessionRow>(db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?').get(hashToken(token)));
+  const row = plain<SessionRow>(
+    await db.prepare('SELECT * FROM auth_sessions WHERE token_hash = $1').get(hashToken(token)),
+  );
   if (!row) return null;
   if (new Date(row.expires_at).getTime() <= Date.now()) {
-    db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(row.token_hash);
+    await db.prepare('DELETE FROM auth_sessions WHERE token_hash = $1').run(row.token_hash);
     return null;
   }
   return findUserById(row.user_id);
 }
 
-export function destroySession(token: string | undefined): void {
+export async function destroySession(token: string | undefined): Promise<void> {
   if (!token) return;
-  getDb().prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashToken(token));
+  const db = getDb();
+  await db.prepare('DELETE FROM auth_sessions WHERE token_hash = $1').run(hashToken(token));
 }
 
-export function purgeExpiredSessions(): void {
-  getDb().prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date().toISOString());
+export async function purgeExpiredSessions(): Promise<void> {
+  const db = getDb();
+  await db.prepare('DELETE FROM auth_sessions WHERE expires_at <= $1').run(new Date().toISOString());
 }
 
-export function publicUser(u: UserRow): {
+export async function publicUser(u: UserRow): Promise<{
   id: string;
   email: string;
   display_name: string;
@@ -159,9 +168,11 @@ export function publicUser(u: UserRow): {
   role: Role;
   timezone: string;
   calibrated: boolean;
-} {
+}> {
   const db = getDb();
-  const pcpRow = db.prepare('SELECT locked FROM pcp WHERE candidate_id = ?').get(u.id) as { locked?: number } | undefined;
+  const pcpRow = (await db.prepare('SELECT locked FROM pcp WHERE candidate_id = $1').get(u.id)) as
+    | { locked?: number }
+    | undefined;
   return {
     id: u.id,
     email: u.email,
@@ -173,24 +184,29 @@ export function publicUser(u: UserRow): {
   };
 }
 
-export function setPassword(userId: string, password: string): void {
+export async function setPassword(userId: string, password: string): Promise<void> {
   if (password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
-  getDb().prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), userId);
+  const db = getDb();
+  await db.prepare('UPDATE users SET password_hash = $1 WHERE id = $2').run(hashPassword(password), userId);
 }
 
-export function userJsonPatch(userId: string, patch: { display_name?: string; avatar?: string | null; timezone?: string }): UserRow {
-  const current = findUserById(userId);
+export async function userJsonPatch(
+  userId: string,
+  patch: { display_name?: string; avatar?: string | null; timezone?: string },
+): Promise<UserRow> {
+  const current = await findUserById(userId);
   if (!current) throw new HttpError(404, 'Account not found.');
   const display_name = patch.display_name?.trim() || current.display_name;
   const avatar = patch.avatar === undefined ? current.avatar : patch.avatar;
   const timezone = patch.timezone ?? current.timezone;
-  getDb()
-    .prepare('UPDATE users SET display_name = ?, avatar = ?, timezone = ? WHERE id = ?')
+  const db = getDb();
+  await db
+    .prepare('UPDATE users SET display_name = $1, avatar = $2, timezone = $3 WHERE id = $4')
     .run(display_name, avatar, timezone, userId);
-  getDb()
-    .prepare('UPDATE candidates SET display_name = ? WHERE candidate_id = ?')
+  await db
+    .prepare('UPDATE candidates SET display_name = $1 WHERE candidate_id = $2')
     .run(display_name, userId);
-  return findUserById(userId)!;
+  return (await findUserById(userId))!;
 }
 
 export function jsonOf<T>(raw: unknown, fallback: T): T {

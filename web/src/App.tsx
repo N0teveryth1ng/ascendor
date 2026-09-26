@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BarChart3, Home, LogOut, PlayCircle, Sparkles, Users } from 'lucide-react';
+import { BarChart3, History, Home, LogOut, PlayCircle, Sparkles, Users } from 'lucide-react';
 import { useForge, type View } from '@/store/useForge';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -11,12 +11,14 @@ import { Practice } from '@/screens/Practice';
 import { Onboarding } from '@/screens/Onboarding';
 import { SessionRunner } from '@/screens/SessionRunner';
 import { Teacher } from '@/screens/Teacher';
+import { History as HistoryScreen } from '@/screens/History';
 import { cn } from '@/lib/utils';
 
 const CANDIDATE_NAV: { view: View; label: string; icon: typeof Home }[] = [
   { view: 'home', label: 'Home', icon: Home },
   { view: 'practice', label: 'Practise', icon: PlayCircle },
   { view: 'progress', label: 'Progress', icon: BarChart3 },
+  { view: 'history', label: 'History', icon: History },
 ];
 
 export default function App() {
@@ -52,6 +54,7 @@ export default function App() {
         <main className={showChrome ? 'pb-20' : undefined}>
           {view === 'home' && <HomeScreen />}
           {view === 'progress' && <Progress />}
+          {view === 'history' && <HistoryScreen />}
           {view === 'practice' && <Practice />}
           {view === 'onboarding' && <Onboarding />}
           {view === 'session' && <SessionRunner />}

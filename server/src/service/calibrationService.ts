@@ -15,18 +15,18 @@ import { GateError } from './sessionService.js';
 import { MODULES, ALL_MODULE_IDS } from '../core/modules.js';
 import { currentRank, insertRank } from '../db/repo.js';
 
-export function ensureCandidate(id: string, displayName?: string): void {
-  if (!candidateExists(id)) {
-    createCandidate(id, displayName ?? id.toUpperCase());
+export async function ensureCandidate(id: string, displayName?: string): Promise<void> {
+  if (!(await candidateExists(id))) {
+    await createCandidate(id, displayName ?? id.toUpperCase());
   }
 }
 
-export function calibrationStatus(candidateId: CandidateId): {
+export async function calibrationStatus(candidateId: CandidateId): Promise<{
   calibrated: boolean;
   pcp: Pcp | null;
   next_vector: string | null;
-} {
-  const pcp = getPcp(candidateId);
+}> {
+  const pcp = await getPcp(candidateId);
   return {
     calibrated: pcp !== null,
     pcp,
@@ -34,14 +34,14 @@ export function calibrationStatus(candidateId: CandidateId): {
   };
 }
 
-export function recordPass(
+export async function recordPass(
   candidateId: CandidateId,
   vector: string,
   passType: 'untimed' | 'timed',
   data: Omit<RawPass, 'vector' | 'pass_type'>,
-): void {
-  ensureCandidate(candidateId);
-  insertCalibrationPass({
+): Promise<void> {
+  await ensureCandidate(candidateId);
+  await insertCalibrationPass({
     candidateId,
     vector,
     passType,
@@ -75,12 +75,12 @@ export interface FinaliseOptions {
   recalibrate?: boolean;
 }
 
-export function finaliseCalibration(
+export async function finaliseCalibration(
   candidateId: CandidateId,
   passes: RawPass[],
   opts: FinaliseOptions = {},
-): Pcp {
-  const existing = getPcp(candidateId);
+): Promise<Pcp> {
+  const existing = await getPcp(candidateId);
   if (existing && !opts.recalibrate) {
     throw new GateError(
       `PCP LOCKED — ${candidateId} is already calibrated (${existing.calibration_date}). ` +
@@ -108,7 +108,7 @@ export function finaliseCalibration(
   }
 
   const pcp = buildPcp(candidateId, passes);
-  savePcp(pcp);
+  await savePcp(pcp);
 
   const c1 = computeC1(passes.filter((p) => p.vector === 'C1'));
   const c5 = computeC5(passes.filter((p) => p.vector === 'C5'));
@@ -125,24 +125,24 @@ export function finaliseCalibration(
     pattern_intuition: 0,
   };
 
-  bootstrapCandidate(candidateId, floors, seedMetrics);
+  await bootstrapCandidate(candidateId, floors, seedMetrics);
   // On recalibration the track is already live: reseeding every rolling window
   // would wipe the candidate's APE history. Only a first calibration seeds them.
   if (!existing) {
-    initialiseWindows(candidateId, pcp.phase_1_entry_difficulty_seed.latency_threshold_ms, {
+    await initialiseWindows(candidateId, pcp.phase_1_entry_difficulty_seed.latency_threshold_ms, {
       ...pcp.phase_1_entry_difficulty_seed.phase1_sublevel,
     });
   }
-  if (currentRank(candidateId) !== pcp.entry_rank) {
-    insertRank(candidateId, pcp.entry_rank);
+  if ((await currentRank(candidateId)) !== pcp.entry_rank) {
+    await insertRank(candidateId, pcp.entry_rank);
   }
   void ALL_MODULE_IDS;
   void MODULES;
   return pcp;
 }
 
-export function requirePcp(candidateId: CandidateId): Pcp {
-  const pcp = getPcp(candidateId);
+export async function requirePcp(candidateId: CandidateId): Promise<Pcp> {
+  const pcp = await getPcp(candidateId);
   if (!pcp) {
     throw new GateError(
       'CALIBRATION INCOMPLETE — no PCP on file. Phase 1 is locked until the calibration battery is submitted.',
