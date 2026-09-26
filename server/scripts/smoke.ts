@@ -1,23 +1,17 @@
 /**
  * End-to-end verification of the load-bearing claims in the v2 spec.
  * Run: npm run smoke --workspace server
+ *
+ * Requires DATABASE_URL. The suite clears only the three candidate ids it
+ * creates (see resetSmokeFixtures), so it is safe to point at a development
+ * database that also holds real candidate tracks. For a full wipe on a scratch
+ * database, use `npm run db:reset` instead.
  */
-import { rmSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { migrate } from '../src/db/index.js';
+import { resetSmokeFixtures } from './testDb.js';
 import type { RawPass } from '../src/core/calibration.js';
 import type { Attempt } from '../src/core/types.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const dbPath = resolve(here, '../data/smoke.db');
-for (const suffix of ['', '-wal', '-shm']) {
-  try {
-    rmSync(dbPath + suffix, { force: true });
-  } catch {
-    /* ignore */
-  }
-}
-process.env.FORGE_DB_PATH = dbPath;
 // The suite drives the seeded demo tracks (billi/anik), so opt in explicitly
 // rather than relying on the default being on.
 process.env.SEED_DEMO = '1';
@@ -52,16 +46,33 @@ function section(name: string): void {
   console.log('-'.repeat(name.length));
 }
 
-const CANDIDATE = 'billi';
+/*
+ * Fixture ids are namespaced with a `smoke-` prefix.
+ *
+ * These used to be the bare ids `billi` and `anik`, which are also the two
+ * fixed production candidate ids. resetSmokeFixtures deletes every row for the
+ * ids it is given, so pointing this suite at a real database would have deleted
+ * both real candidate tracks while claiming to be "safe anywhere". The prefix
+ * makes the blast radius disjoint from any account that can actually sign in.
+ */
+const CANDIDATE = 'smoke-billi';
+/** Every candidate id this suite creates, so the reset can clear exactly them. */
+const FIXTURES = [CANDIDATE, 'smoke-anik', 'smoke-streak-probe'] as const;
+
+// Schema first, then a clean slate, then the demo tracks the suite drives.
+// resetSmokeFixtures only deletes rows for the ids above, so this is safe to run
+// against a development database that also holds real candidate tracks.
+await migrate();
+await resetSmokeFixtures(FIXTURES);
 
 /* ── 1. Calibration gate ──────────────────────────────────────────────────── */
 
 section('1. CALIBRATION HARD GATE (Section 11)');
-createCandidate(CANDIDATE, 'Billi');
+await createCandidate(CANDIDATE, 'Billi');
 {
   let gated = false;
   try {
-    requirePcp(CANDIDATE);
+    await requirePcp(CANDIDATE);
   } catch (e) {
     gated = (e as { status?: number }).status === 423;
   }
@@ -69,7 +80,7 @@ createCandidate(CANDIDATE, 'Billi');
 
   let rejected = false;
   try {
-    finaliseCalibration(CANDIDATE, [
+    await finaliseCalibration(CANDIDATE, [
       { vector: 'C1', pass_type: 'untimed', correct: 5, total: 5, mean_latency_ms: 900 },
     ]);
   } catch (e) {
@@ -145,7 +156,7 @@ const passes: RawPass[] = [
   { vector: 'C5' as const, pass_type: 'timed' as const, correct: 31, total: 36, mean_latency_ms: 2700 },
 ];
 
-const pcp = finaliseCalibration(CANDIDATE, passes);
+const pcp = await finaliseCalibration(CANDIDATE, passes);
 check('vocabulary band derived from untimed C1', pcp.vocabulary_band === 'V5', `got ${pcp.vocabulary_band} (V5 scored 90%, V6 scored 85%)`);
 check('syntax ceiling derived from untimed C2', pcp.syntax_ceiling === 'S4', `got ${pcp.syntax_ceiling}`);
 check('baseline reflex latency from timed C5', pcp.baseline_reflex_latency_ms === 2700, `got ${pcp.baseline_reflex_latency_ms}`);
@@ -161,7 +172,7 @@ check('seed threshold derived, not fixed 2400', seed.latency_threshold_ms !== 24
 check('seed wpm ceiling below C3 max intelligible', seed.wpm_ceiling < 150, `C3 max=150, ceiling=${seed.wpm_ceiling}`);
 check('seed flash within APE clamp 1200-2500', seed.flash_duration_ms >= 1200 && seed.flash_duration_ms <= 2500, `${seed.flash_duration_ms}ms`);
 
-for (const p of [passes[0]!, passes[3]!]) recordPass(CANDIDATE, p.vector, p.pass_type, p);
+for (const p of [passes[0]!, passes[3]!]) await recordPass(CANDIDATE, p.vector, p.pass_type, p);
 
 /* ── 3. APE factor selection (Section 2.2) ─────────────────────────────────── */
 
@@ -347,10 +358,10 @@ section('6. ERROR & FEEDBACK PROTOCOL (Section 4)');
 
 section('7. SESSION FLOW — SESSION-TO-SESSION ADAPTATION');
 
-function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; latency: number; sessionIndex: number; errorTag?: string }) {
-  const p = getPcp(CANDIDATE)!;
-  const window = getWindow(CANDIDATE, moduleId);
-  const locks = activeLocks(CANDIDATE);
+async function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; latency: number; sessionIndex: number; errorTag?: string }) {
+  const p = (await getPcp(CANDIDATE))!;
+  const window = await getWindow(CANDIDATE, moduleId);
+  const locks = await activeLocks(CANDIDATE);
   const plan = buildSession(moduleId, {
     candidate_id: CANDIDATE,
     pcp: p,
@@ -383,8 +394,11 @@ function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; la
     };
   });
 
-  return processSessionResult({
-    session_id: `${moduleId}-live-${opts.sessionIndex}`,
+  return await processSessionResult({
+    // sessions.session_id is the primary key on its own, so it has to be unique
+    // across the whole table, not just per candidate. Scoping it to the fixture
+    // keeps repeated runs from colliding with rows a previous run left behind.
+    session_id: `${CANDIDATE}-${moduleId}-live-${opts.sessionIndex}`,
     candidate_id: CANDIDATE,
     module_id: moduleId,
     attempts,
@@ -394,17 +408,17 @@ function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; la
 }
 
 {
-  const r1 = runSession('P1_VD', { accuracy: 0.7, latency: 3000, sessionIndex: 1, errorTag: 'tense_marker' });
+  const r1 = await runSession('P1_VD', { accuracy: 0.7, latency: 3000, sessionIndex: 1, errorTag: 'tense_marker' });
   check('first session records an INIT adjustment', r1.adjustment.reason === 'INIT', r1.adjustment.reason);
-  check('metrics updated from real performance', getPcp(CANDIDATE) !== null);
+  check('metrics updated from real performance', await getPcp(CANDIDATE) !== null);
 }
 
 {
   // Four sessions carrying the same error tag => lock on the 4th.
   for (let i = 2; i <= 4; i++) {
-    runSession('P1_VD', { accuracy: 0.75, latency: 2800, sessionIndex: i, errorTag: 'tense_marker' });
+    await runSession('P1_VD', { accuracy: 0.75, latency: 2800, sessionIndex: i, errorTag: 'tense_marker' });
   }
-  const locks = activeLocks(CANDIDATE);
+  const locks = await activeLocks(CANDIDATE);
   check('Structural Lock triggered on 4th recurrence', locks.some((l) => l.tag === 'tense_marker'), `active: ${locks.map((l) => `${l.module_id}:${l.tag}`).join(',') || 'none'}`);
 
   const lock = locks.find((l) => l.tag === 'tense_marker');
@@ -414,9 +428,9 @@ function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; la
 
   const remediated = buildSession('P1_VD', {
     candidate_id: CANDIDATE,
-    pcp: getPcp(CANDIDATE)!,
-    window: getWindow(CANDIDATE, 'P1_VD'),
-    locks: activeLocks(CANDIDATE),
+    pcp: (await getPcp(CANDIDATE))!,
+    window: await getWindow(CANDIDATE, 'P1_VD'),
+    locks: await activeLocks(CANDIDATE),
     session_index: 5,
   });
   check('remediation items present in next session', Boolean(remediated.remediation), JSON.stringify(remediated.remediation));
@@ -429,15 +443,15 @@ function runSession(moduleId: keyof typeof MODULES, opts: { accuracy: number; la
 {
   // Sustained high performance => tightening.
   for (let i = 5; i <= 9; i++) {
-    runSession('P1_VD', { accuracy: 1.0, latency: 1500, sessionIndex: i });
+    await runSession('P1_VD', { accuracy: 1.0, latency: 1500, sessionIndex: i });
   }
-  const w = getWindow(CANDIDATE, 'P1_VD');
+  const w = await getWindow(CANDIDATE, 'P1_VD');
   const tightened = w.adjustment_factor_log.filter((e) => e.reason === 'TIGHTEN');
   check('APE tightened after sustained improvement', tightened.length > 0, `${tightened.length} tighten events`);
   check('threshold now below the calibration seed', w.current_threshold_ms < pcp.phase_1_entry_difficulty_seed.latency_threshold_ms, `${w.current_threshold_ms}ms`);
   check('threshold respects the module floor', w.current_threshold_ms >= MODULES.P1_VD.threshold_clamp_ms.min, `${w.current_threshold_ms}ms`);
   check('window holds at most 8 sessions', w.last_8_sessions.length <= 8, `${w.last_8_sessions.length}`);
-  const otherWindows = allWindows(CANDIDATE);
+  const otherWindows = await allWindows(CANDIDATE);
   check('other modules untouched (fully independent tracks)', otherWindows.P2_RDI?.last_8_sessions.length === 0, `P2_RDI sessions: ${otherWindows.P2_RDI?.last_8_sessions.length}`);
 }
 
@@ -448,14 +462,14 @@ section('8. PHASE GATING (Section 7)');
 {
   const plan = buildSession('P4_PC', {
     candidate_id: CANDIDATE,
-    pcp: getPcp(CANDIDATE)!,
-    window: getWindow(CANDIDATE, 'P4_PC'),
+    pcp: (await getPcp(CANDIDATE))!,
+    window: await getWindow(CANDIDATE, 'P4_PC'),
     locks: [],
     session_index: 1,
   });
   check('Phase 4 content builds', plan.items.length > 0, `${plan.items.length} items`);
 
-  const profile = buildCandidateProfile(CANDIDATE)!;
+  const profile = (await buildCandidateProfile(CANDIDATE))!;
   check('Phase 2 locked at DECODER', profile.phase_unlocked[2] === false);
   check('Phase 3 locked at DECODER', profile.phase_unlocked[3] === false);
   check('Phase 4 locked at DECODER', profile.phase_unlocked[4] === false);
@@ -467,16 +481,16 @@ section('8. PHASE GATING (Section 7)');
 section('9. FAILURE TIERS — NO LOCKOUT, NO STAT CUTS (Section 5.2)');
 
 {
-  const profileBefore = buildCandidateProfile(CANDIDATE)!;
+  const profileBefore = (await buildCandidateProfile(CANDIDATE))!;
   const floorsBefore = { ...profileBefore.metric_floors };
 
   // Drive the day down.
   for (let i = 10; i <= 14; i++) {
-    runSession('P1_VSF', { accuracy: 0.2, latency: 6000, sessionIndex: i, errorTag: 'scene_action_binding' });
+    await runSession('P1_VSF', { accuracy: 0.2, latency: 6000, sessionIndex: i, errorTag: 'scene_action_binding' });
   }
 
-  const outcome = applyDailyTier(CANDIDATE);
-  const profileAfter = buildCandidateProfile(CANDIDATE)!;
+  const outcome = await applyDailyTier(CANDIDATE);
+  const profileAfter = (await buildCandidateProfile(CANDIDATE))!;
 
   check('low daily aggregate classified BELOW_95 or BELOW_85', outcome.tier !== 'NONE', `${outcome.tier} @ ${outcome.aggregate_pct}%`);
   check('streak progress reset to zero', outcome.streak_after === 0, `streak ${outcome.streak_before} -> ${outcome.streak_after}`);
@@ -489,14 +503,14 @@ section('9. FAILURE TIERS — NO LOCKOUT, NO STAT CUTS (Section 5.2)');
     JSON.stringify(profileAfter.metric_floors) === JSON.stringify(floorsBefore),
   );
   check('access still available (no lockout record)', profileAfter.pending_remediation !== undefined);
-  const streak = getStreak(CANDIDATE);
+  const streak = await getStreak(CANDIDATE);
   check('streak multiplier never becomes 0', streak.multiplier >= 1, `${streak.multiplier}`);
 }
 
 {
-  const sessions = listSessions(CANDIDATE, 100);
+  const sessions = await listSessions(CANDIDATE, 100);
   check('all sessions retained (no punitive erasure)', sessions.length >= 14, `${sessions.length} sessions`);
-  const log = buildCandidateProfile(CANDIDATE)!.daily_log;
+  const log = (await buildCandidateProfile(CANDIDATE))!.daily_log;
   const today = log[0];
   // SQLite stores these as integers 0/1; the row mapping normalises to boolean.
   check('daily log records baseline_stats_cut = false', today?.baseline_stats_cut === false, `${String(today?.baseline_stats_cut)}`);
@@ -508,7 +522,7 @@ section('9. FAILURE TIERS — NO LOCKOUT, NO STAT CUTS (Section 5.2)');
 section('10. METRICS SYSTEM (Section 3)');
 
 {
-  const profile = buildCandidateProfile(CANDIDATE)!;
+  const profile = (await buildCandidateProfile(CANDIDATE))!;
   const m = profile.metrics;
   check('PI computed at APE-set speed', m.precision_index > 0 && m.precision_index <= 100, `${m.precision_index}`);
   check('RL reported as % of personal baseline, not raw ms', m.reflex_latency_pct_of_baseline > 0, `${m.reflex_latency_pct_of_baseline}% of ${pcp.baseline_reflex_latency_ms}ms`);
@@ -543,9 +557,9 @@ section('12. DETERMINISTIC CONTENT GENERATION');
 {
   const args = {
     candidate_id: CANDIDATE,
-    pcp: getPcp(CANDIDATE)!,
-    window: getWindow(CANDIDATE, 'P1_VD'),
-    locks: activeLocks(CANDIDATE),
+    pcp: (await getPcp(CANDIDATE))!,
+    window: await getWindow(CANDIDATE, 'P1_VD'),
+    locks: await activeLocks(CANDIDATE),
     session_index: 42,
   };
   const a = buildSession('P1_VD', args);
@@ -562,8 +576,8 @@ section('12. DETERMINISTIC CONTENT GENERATION');
 section('13. CANDIDATE INDEPENDENCE (Section 1.3)');
 
 {
-  const other = 'anik';
-  createCandidate(other, 'Anik');
+  const other = 'smoke-anik';
+  await createCandidate(other, 'Anik');
   const strongPasses = JSON.parse(JSON.stringify(passes)) as typeof passes;
   strongPasses[0]!.band_accuracy = { V1: 100, V2: 100, V3: 100, V4: 100, V5: 100, V6: 100, V7: 100, V8: 100, V9: 100, V10: 100, V11: 100, V12: 100 };
   strongPasses[0]!.correct = 96;
@@ -581,14 +595,14 @@ section('13. CANDIDATE INDEPENDENCE (Section 1.3)');
   strongPasses[11]!.correct = 36;
   strongPasses[12]!.correct = 35;
 
-  const anik = finaliseCalibration(other, strongPasses);
+  const anik = await finaliseCalibration(other, strongPasses);
   check('second candidate gets a different vocabulary band', anik.vocabulary_band !== pcp.vocabulary_band, `billi=${pcp.vocabulary_band} anik=${anik.vocabulary_band}`);
   check('second candidate gets a different syntax ceiling', anik.syntax_ceiling !== pcp.syntax_ceiling, `billi=${pcp.syntax_ceiling} anik=${anik.syntax_ceiling}`);
   check('stronger PCP yields a higher entry rank', anik.entry_rank === 'RANK 02: OPERATOR', `anik=${anik.entry_rank}`);
   check('stronger PCP yields a tighter starting threshold', anik.phase_1_entry_difficulty_seed.latency_threshold_ms !== pcp.phase_1_entry_difficulty_seed.latency_threshold_ms, `billi=${pcp.phase_1_entry_difficulty_seed.latency_threshold_ms} anik=${anik.phase_1_entry_difficulty_seed.latency_threshold_ms}`);
 
-  const billiProfile = buildCandidateProfile(CANDIDATE)!;
-  const anikProfile = buildCandidateProfile(other)!;
+  const billiProfile = (await buildCandidateProfile(CANDIDATE))!;
+  const anikProfile = (await buildCandidateProfile(other))!;
   check('no shared rolling windows', billiProfile.rolling_windows.P1_VD?.last_8_sessions.length !== anikProfile.rolling_windows.P1_VD?.last_8_sessions.length, `billi=${billiProfile.rolling_windows.P1_VD?.last_8_sessions.length} anik=${anikProfile.rolling_windows.P1_VD?.last_8_sessions.length}`);
   check('no shared streak state', JSON.stringify(billiProfile.streak) !== JSON.stringify(anikProfile.streak));
   check('no shared structural locks', anikProfile.active_structural_locks.length === 0);
@@ -744,7 +758,7 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
   /* Section 1.2 mandates a timed pass on EVERY vector. */
   let timedError: string | null = null;
   try {
-    finaliseCalibration('no-timed', passes.map((p) => (p.pass_type === 'timed' ? { ...p, pass_type: 'untimed' as const } : p)));
+    await finaliseCalibration('no-timed', passes.map((p) => (p.pass_type === 'timed' ? { ...p, pass_type: 'untimed' as const } : p)));
   } catch (e) {
     timedError = (e as Error).message;
   }
@@ -753,7 +767,7 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
   /* A calibrated PCP is locked; a silent overwrite would reset the track. */
   let lockError: string | null = null;
   try {
-    finaliseCalibration(CANDIDATE, passes);
+    await finaliseCalibration(CANDIDATE, passes);
   } catch (e) {
     lockError = (e as Error).message;
   }
@@ -763,14 +777,14 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
 {
   /* A streak counts consecutive DAYS. Repeated sessions in one day must not
      inflate it, and they must not be undone by a later session either. */
-  const DAY_CAND = 'streak-probe';
-  createCandidate(DAY_CAND, 'STREAK PROBE');
-  recordPass(DAY_CAND, 'C1', 'untimed', passes[0]!);
-  recordPass(DAY_CAND, 'C2', 'untimed', passes[2]!);
-  recordPass(DAY_CAND, 'C3', 'untimed', passes[4]!);
-  recordPass(DAY_CAND, 'C4', 'untimed', passes[9]!);
-  recordPass(DAY_CAND, 'C5', 'untimed', passes[11]!);
-  finaliseCalibration(DAY_CAND, passes);
+  const DAY_CAND = 'smoke-streak-probe';
+  await createCandidate(DAY_CAND, 'STREAK PROBE');
+  await recordPass(DAY_CAND, 'C1', 'untimed', passes[0]!);
+  await recordPass(DAY_CAND, 'C2', 'untimed', passes[2]!);
+  await recordPass(DAY_CAND, 'C3', 'untimed', passes[4]!);
+  await recordPass(DAY_CAND, 'C4', 'untimed', passes[9]!);
+  await recordPass(DAY_CAND, 'C5', 'untimed', passes[11]!);
+  await finaliseCalibration(DAY_CAND, passes);
 
   const perfect = (n: number) =>
     Array.from({ length: n }, (_, k) => ({
@@ -789,12 +803,12 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
     })) as unknown as Attempt[];
 
   for (let i = 1; i <= 3; i++) {
-    processSessionResult(
-      { session_id: `streak-${i}`, candidate_id: DAY_CAND, module_id: 'P1_VD', attempts: perfect(i), started_at: new Date().toISOString(), ended_at: new Date().toISOString() },
+    await processSessionResult(
+      { session_id: `${DAY_CAND}-streak-${i}`, candidate_id: DAY_CAND, module_id: 'P1_VD', attempts: perfect(i), started_at: new Date().toISOString(), ended_at: new Date().toISOString() },
       [],
     );
   }
-  const afterThree = getStreak(DAY_CAND);
+  const afterThree = await getStreak(DAY_CAND);
   check('three sessions in one day count as a single streak day', afterThree.current === 1, `streak=${afterThree.current} after 3 sessions`);
 }
 

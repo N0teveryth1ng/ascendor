@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "db:reset": "tsx scripts/resetDb.ts",
-    "e2e": "tsx scripts/e2e.ts",
+    "e2e": "tsx scripts/run-e2e.ts",
     "e2e:serve": "cross-env SEED_DEMO=1 node dist/src/index.js"
   },
   "dependencies": {

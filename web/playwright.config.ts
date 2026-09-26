@@ -15,8 +15,21 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
+  /*
+   * These specs drive the real API against a real (often remote) Postgres, where
+   * a single round-trip costs one network RTT. Measured from a machine in India
+   * to a Neon us-east-2 endpoint, one RTT is ~270ms, so a page that fires the
+   * signup, profile and onboarding calls in sequence legitimately takes several
+   * seconds. Playwright's 5s default is not a safe floor for that, and failing
+   * on it would be a flaky test rather than a real defect. The timeout is set
+   * for the slow path on purpose; a genuinely broken flow still fails fast
+   * because assertions on a missing element do not wait out the clock.
+   */
+  expect: { timeout: 30_000 },
   use: {
     baseURL: `http://127.0.0.1:${WEB_PORT}`,
+    actionTimeout: 30_000,
+    navigationTimeout: 60_000,
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
@@ -29,8 +42,10 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         PORT: String(API_PORT),
-        FORGE_DB_PATH: resolve(here, 'e2e/.tmp/onboarding-ui.db'),
-        // The suite signs up its own fresh accounts, so demo seeding stays off.
+        // DATABASE_URL passes through from the shell. Point it at a dedicated
+        // throwaway database: this suite signs up real accounts, and the smoke
+        // suite truncates its own target outright. Demo seeding stays off so the
+        // spec always gets a genuinely fresh account with no PCP on file.
       },
     },
     {

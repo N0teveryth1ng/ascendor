@@ -1,6 +1,9 @@
 /**
  * Live HTTP verification against a real running server.
- * Run: npm run e2e --workspace server   (server must be listening on 5174)
+ *
+ * Prefer `npm run e2e --workspace server`, which boots the server for you. This
+ * file is only the HTTP client half, so it can also be pointed at an
+ * already-running instance with FORGE_E2E_BASE.
  */
 const BASE = process.env.FORGE_E2E_BASE ?? 'http://127.0.0.1:5174/api';
 const RUN = Date.now().toString(36);
@@ -412,6 +415,75 @@ async function verifyArchive(): Promise<void> {
 }
 
 await verifyArchive();
+
+/**
+ * Section 15: whole-surface sweep.
+ *
+ * /api/history and /api/stats shipped with latent 500s (a `created_at` column
+ * that does not exist, and `AVG()` arriving as a string) that no suite caught,
+ * because neither smoke nor e2e called those two routes. The route list is read
+ * from the live Express table rather than hand-maintained, so a route added later
+ * is swept automatically instead of quietly going untested.
+ */
+async function sweepEveryRoute(): Promise<void> {
+  const { app } = await import('../src/app.js');
+
+  const routes: { methods: string[]; path: string }[] = [];
+  const walk = (stack: any[], prefix: string): void => {
+    for (const layer of stack) {
+      if (layer.route) {
+        routes.push({
+          methods: Object.keys(layer.route.methods ?? {}).filter((m) => m !== '_all'),
+          path: prefix + layer.route.path,
+        });
+      } else if (layer.name === 'router' && layer.handle?.stack) {
+        // Recover the mount prefix from the layer's regexp, e.g.
+        // "^\\/api\\/teacher\\/?(?=\\/|$)" -> "/api/teacher". Getting this wrong
+        // silently skips whole routers, so the shape is asserted below rather
+        // than trusted.
+        const src: string = layer.regexp?.source ?? '';
+        const m = /^\^((?:\\\/[\w-]+)+)/.exec(src);
+        const seg = m?.[1] ? m[1].replace(/\\\//g, '/') : '';
+        walk(layer.handle.stack, prefix + seg);
+      }
+    }
+  };
+  walk((app as any)._router.stack, '');
+
+  // Only GETs are swept: they are safe to call with no body and they cover every
+  // read model, which is where the port's query bugs lived.
+  const gets = [...new Set(routes.filter((r) => r.methods.includes('get')).map((r) => r.path))].sort();
+  check('the route table exposes GET routes to sweep', gets.length > 20, `${gets.length} GET routes`);
+
+  // A sweep that quietly misses a router is worse than no sweep: the two
+  // previously-broken reads lived in routers, so assert the prefixes resolved.
+  for (const needed of ['/api/history', '/api/stats', '/api/dashboard', '/api/auth/me', '/api/teacher/candidates/:id']) {
+    check(`sweep covers ${needed}`, gets.includes(needed));
+  }
+
+  // Error text that means a query or a type assumption broke, even on a 200.
+  const crash = /column \\"|does not exist|is not a function|undefined is not|null is not|Cannot read properties/i;
+
+  for (const raw of gets) {
+    // raw is now absolute, e.g. /api/history, so strip the /api that BASE carries.
+    const path = raw.replace(':id', CAND).replace(/:module_id/g, 'P1_VD').replace(/^\/api/, '');
+    for (const [role, cookie] of [['candidate', SESSION], ['admin', ADMIN]] as const) {
+      const res = await fetch(`${BASE}${path}`, { headers: { cookie } });
+      const text = await res.text();
+      const broken = res.status >= 500 || (res.status === 200 && crash.test(text));
+      if (broken) {
+        check(`${role} GET ${path} responds cleanly`, false, `status ${res.status} ${text.slice(0, 120)}`);
+      }
+    }
+  }
+  check(`every GET route answers both roles without a 5xx (${gets.length} routes)`, true);
+
+  // A missing candidate is a 404, not a server fault.
+  const missing = await call<{ error: string }>('/teacher/candidates/does-not-exist', undefined, ADMIN);
+  check('a missing candidate is 404, not 500', missing.status === 404, `got ${missing.status}`);
+}
+
+await sweepEveryRoute();
 
 console.log('='.repeat(50));
 console.log(failures === 0 ? `ALL ${checks} LIVE CHECKS PASSED` : `${failures} of ${checks} LIVE CHECKS FAILED`);
