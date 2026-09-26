@@ -7,8 +7,9 @@
  * database that also holds real candidate tracks. For a full wipe on a scratch
  * database, use `npm run db:reset` instead.
  */
-import { migrate } from '../src/db/index.js';
+import { migrate, getDb } from '../src/db/index.js';
 import { resetSmokeFixtures } from './testDb.js';
+import { convergeSeededAccount, authenticate } from '../src/service/auth.js';
 import type { RawPass } from '../src/core/calibration.js';
 import type { Attempt } from '../src/core/types.js';
 
@@ -808,9 +809,44 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
       [],
     );
   }
-  const afterThree = await getStreak(DAY_CAND);
-  check('three sessions in one day count as a single streak day', afterThree.current === 1, `streak=${afterThree.current} after 3 sessions`);
-}
+    const afterThree = await getStreak(DAY_CAND);
+    check('three sessions in one day count as a single streak day', afterThree.current === 1, `streak=${afterThree.current} after 3 sessions`);
+  }
+
+  /*
+   * Fixed-account convergence.
+   *
+   * A create-once seeder is a production trap: a database seeded earlier as a
+   * demo keeps the demo password, so a later deploy in fixed-account mode is
+   * configured with one password and rejects the correct one with a 401 that
+   * reads like a typo. The environment has to win on every cold start.
+   *
+   * Uses a smoke-namespaced id, so this never touches a real account.
+   */
+  {
+    const convId = 'smoke-converge';
+    const base = { id: convId, display_name: 'Converge', role: 'candidate' as const };
+    const first = 'converge-pass-one';
+    const second = 'converge-pass-two';
+
+    const wroteFirst = await convergeSeededAccount({ ...base, email: `${convId}@forge.test`, password: first });
+    check('a fixed account is written on first seed', wroteFirst === true);
+
+    const wroteAgain = await convergeSeededAccount({ ...base, email: `${convId}@forge.test`, password: first });
+    check('an unchanged fixed account is left alone, not rewritten', wroteAgain === false);
+
+    await convergeSeededAccount({ ...base, email: `${convId}@forge.test`, password: second });
+    const fresh = await authenticate(`${convId}@forge.test`, second);
+    const stale = await authenticate(`${convId}@forge.test`, first).then(
+      () => true,
+      () => false,
+    );
+    check('a rotated fixed-account password takes effect on the next seed', fresh.id === convId);
+    check('the superseded fixed-account password stops working', stale === false);
+
+    const sessions = await getDb().prepare('SELECT COUNT(*) AS n FROM auth_sessions WHERE user_id = $1').get(convId);
+    check('a fixed-account password rotation invalidates existing sessions', Number(sessions?.n ?? 0) === 0);
+  }
 
 console.log(`\n${'='.repeat(46)}`);
 console.log(failures === 0 ? `ALL ${checks} CHECKS PASSED` : `${failures} of ${checks} CHECKS FAILED`);

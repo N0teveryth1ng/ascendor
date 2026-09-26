@@ -1,4 +1,4 @@
-import { createUser, findUserById } from './auth.js';
+import { convergeSeededAccount } from './auth.js';
 
 interface SeedAccount {
   id: string;
@@ -112,10 +112,16 @@ export async function seedAccounts(): Promise<void> {
   if (!accounts) return;
 
   for (const account of accounts) {
-    if (await findUserById(account.id)) continue;
     try {
-      await createUser(account);
-      console.log(`[FORGE] seeded ${account.role} account ${account.id} <${account.email}>`);
+      // Converge rather than create-once. A fixed account that already exists
+      // must still pick up the current environment, or the credentials in the
+      // environment are silently ignored and signin fails with a 401 that looks
+      // like a wrong password. This bites whenever the same database was seeded
+      // earlier as a demo or by a previous deploy with different values.
+      const changed = await convergeSeededAccount(account);
+      if (changed) {
+        console.log(`[FORGE] seeded ${account.role} account ${account.id} <${account.email}>`);
+      }
     } catch (err) {
       console.error(`[FORGE] failed to seed ${account.id}:`, err instanceof Error ? err.message : err);
     }
