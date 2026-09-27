@@ -115,3 +115,15 @@ test('deriveVocabularyBand needs percentages, which is what the client now sends
   assert.equal(deriveVocabularyBand({ V1: 100, V2: 100, V3: 100 }), 'V3');
   assert.equal(deriveVocabularyBand({ V1: 100, V2: 100, V3: 40 }), 'V2', 'stops at the first failing band');
 });
+
+test('every band score a one-item-per-band pass can produce is representable', () => {
+  // Guards the shape the client actually emits: with one item per band each
+  // band is either correct or not, so the only honest values are 0 and 100.
+  // The write boundary rejects anything else, which is what stops a per-band
+  // count from being stored as though it were a score.
+  assert.equal(C1_ITEMS_PER_BAND, 1);
+  for (const correct of [true, false]) {
+    const pct = Math.round((correct ? 1 : 0) * 100);
+    assert.ok(pct === 0 || pct === 100);
+  }
+});

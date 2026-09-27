@@ -1,6 +1,7 @@
 import type { CalibrationVectorId, CandidateId, Pcp, VocabularyBand } from '../core/types.js';
 import { buildPcp, type RawPass } from '../core/calibration.js';
 import { BAND_ORDER } from '../content/vocab.js';
+import { C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
 import { HttpError } from './httpError.js';
 import {
   bootstrapCandidate,
@@ -67,6 +68,23 @@ function assertC1BandAccuracy(bandAccuracy: unknown): void {
       throw new HttpError(
         400,
         `C1 band_accuracy[${key}] must be a percentage 0-100, got ${JSON.stringify(value)}`,
+      );
+    }
+    // A percentage alone cannot be validated: a client sending a per-band COUNT
+    // looks identical to a legitimate score once the count is <= 100, and a
+    // count is what the client used to send. With one item per band the only
+    // representable scores are 0 and 100, so anything else means the client is
+    // not reporting what actually happened. Derived from the item count so this
+    // stays correct if the pass size ever changes.
+    const allowed = new Set(
+      Array.from({ length: C1_ITEMS_PER_BAND + 1 }, (_, k) => Math.round((k / C1_ITEMS_PER_BAND) * 100)),
+    );
+    if (!allowed.has(value)) {
+      throw new HttpError(
+        400,
+        `C1 band_accuracy[${key}] must be one of [${[...allowed].join(', ')}] because each band ` +
+          `contributes ${C1_ITEMS_PER_BAND} item(s) to the pass, but got ${value}. ` +
+          'A per-band count and a percentage are not interchangeable here.',
       );
     }
   }
