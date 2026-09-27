@@ -738,13 +738,19 @@ export interface StatsBundle {
  * block titles; `selection_reason` exists for transparency in the teacher
  * surface and is deliberately not surfaced as a choice.
  */
+export interface RoutineModule {
+  order: number;
+  module_id: ModuleId;
+  selection_reason: string;
+  lock_driven: boolean;
+}
+
 export interface RoutineStep {
   order: number;
   block: string;
   block_title: string;
-  module_id: ModuleId;
-  selection_reason: string;
-  lock_driven: boolean;
+  minutes: number;
+  modules: RoutineModule[];
 }
 
 export interface DailyRoutine {

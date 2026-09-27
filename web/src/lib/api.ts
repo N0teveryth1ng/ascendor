@@ -10,6 +10,7 @@ import type {
   ModuleId,
   Onboarding,
   PracticeModule,
+  RoutineModule,
   RoutineStep,
   SessionPlan,
   SessionResult,
@@ -97,18 +98,21 @@ export const api = {
       schedule: unknown;
     }>('/profile'),
   /**
-   * Section 16.1: the client names a *position* in the server-decided routine,
-   * never a module. `module_id` is gone from submit for the same reason — the
-   * server reads the module off the routine step it is grading.
+   * Section 16.1: the client counts through the routine the server built —
+   * `step` is the block, `m` is the position within that block. Neither can
+   * introduce, drop or reorder a module, and `module_id` is gone from submit
+   * for the same reason: the server resolves the module off the routine it is
+   * grading.
    */
   routine: () => request<{ routine: DailyRoutine; schedule: unknown }>('/routine'),
-  nextSession: (step: number) =>
-    request<{ step: RoutineStep; routine: DailyRoutine; plan: SessionPlan }>(
-      `/session/next?step=${step}`,
+  nextSession: (step: number, m = 1) =>
+    request<{ step: RoutineStep; module: RoutineModule; routine: DailyRoutine; plan: SessionPlan }>(
+      `/session/next?step=${step}&m=${m}`,
     ),
   submitSession: (payload: {
     session_id: string;
     step: number;
+    m: number;
     attempts: Attempt[];
     started_at: string;
     ended_at: string;

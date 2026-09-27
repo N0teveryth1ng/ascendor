@@ -29,7 +29,7 @@ import {
   sessionSummaries,
 } from '../db/repo.js';
 import { GateError, applyDailyTier, processSessionResult } from '../service/sessionService.js';
-import { buildDailyRoutine, rejectModuleParam } from '../service/dailyRoutine.js';
+import { buildDailyRoutine, rejectModuleParam, resolveStepModule } from '../service/dailyRoutine.js';
 import { buildArchiveRows, recordExerciseAttempts } from '../service/exerciseArchive.js';
 import { buildDailySchedule } from '../core/scheduler.js';
 import { evaluateRanks, MASTER_WINDOW_DAYS } from '../core/ranks.js';
@@ -289,7 +289,7 @@ async function handleRoutine(req: Request, res: Response): Promise<void> {
   const schedule = await buildDailySchedule({
     date: routine.date,
     active_locks: await activeLocks(id),
-    forced_repeat_modules: routine.steps.filter((s) => s.lock_driven).map((s) => s.module_id),
+    forced_repeat_modules: routine.steps.flatMap((s) => s.modules.filter((m) => m.lock_driven).map((m) => m.module_id)),
   });
 
   res.json({ routine, schedule, pcp_summary: pcpSummary((await getPcp(id))!) });
@@ -305,22 +305,15 @@ async function handleSessionNext(req: Request, res: Response): Promise<void> {
 
   const routine = await buildDailyRoutine(id, todayUtc());
 
-  // `?step=N` selects a position in the server-decided routine, never a module.
-  // Omitting it serves step 1, which is what "start today's routine" means.
-  const stepNo = Number(req.query.step ?? 1);
-  const step = routine.steps.find((s) => s.order === stepNo);
-  if (!step) {
-    throw new HttpError(
-      400,
-      `no routine step ${stepNo} — today's routine has ${routine.steps.length} step(s). ` +
-        'Modules are chosen by the server; a client cannot request one by name.',
-    );
-  }
+  // `?step=N&m=K` counts through the routine the server already built. Neither
+  // value can introduce a module: see resolveStepModule.
+  const { step, module } = resolveStepModule(routine, Number(req.query.step ?? 1), Number(req.query.m ?? 1));
 
-  const { plan, recall_of_session, recall_payload } = await planFor(id, step.module_id, { gated: true });
+  const { plan, recall_of_session, recall_payload } = await planFor(id, module.module_id, { gated: true });
 
   res.json({
     step,
+    module,
     routine,
     plan,
     recall_of_session,
@@ -352,16 +345,8 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
   rejectModuleParam(req.body?.module_id);
 
   const routine = await buildDailyRoutine(id, todayUtc());
-  const stepNo = Number(req.body?.step ?? 1);
-  const step = routine.steps.find((s) => s.order === stepNo);
-  if (!step) {
-    throw new HttpError(
-      400,
-      `no routine step ${stepNo} — today's routine has ${routine.steps.length} step(s). ` +
-        'Modules are chosen by the server; a client cannot request one by name.',
-    );
-  }
-  const moduleId = step.module_id;
+  const { step, module } = resolveStepModule(routine, Number(req.body?.step ?? 1), Number(req.body?.m ?? 1));
+  const moduleId = module.module_id;
 
   const { plan, recall_of_session, recall_payload } = await planFor(id, moduleId, { gated: true });
 
@@ -401,6 +386,7 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
   res.json({
     result,
     step,
+    module,
     routine,
     profile: await buildCandidateProfile(id),
     recall_of_session,

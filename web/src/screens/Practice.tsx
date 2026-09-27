@@ -43,14 +43,26 @@ export function Practice() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <ol className="space-y-2">
+      <ol className="space-y-3">
         {(routine?.steps ?? []).map((s) => (
-          <li key={s.order} className="flex items-baseline justify-between gap-3 rounded-lg border border-border px-4 py-3">
-            <span className="text-sm">
-              <span className="tabular mr-2 text-muted-foreground">{s.order}</span>
-              {s.block_title}
-            </span>
-            <span className="text-xs text-muted-foreground">~{s.lock_driven ? 'extra time' : 'standard'}</span>
+          <li key={s.order} className="rounded-lg border border-border px-4 py-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-sm font-medium">
+                <span className="tabular mr-2 text-muted-foreground">{s.order}</span>
+                {s.block_title}
+              </span>
+              <span className="text-xs text-muted-foreground">{s.minutes} min</span>
+            </div>
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {s.modules.map((m) => (
+                <li
+                  key={m.module_id}
+                  className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground"
+                >
+                  {m.module_id}
+                </li>
+              ))}
+            </ul>
           </li>
         ))}
       </ol>

@@ -78,12 +78,12 @@ async function main(): Promise<void> {
     }
 
     // 200: legal only if it is the same routine, not a single-module plan.
-    const body = JSON.parse(text) as { routine?: unknown; step?: { module_id?: string } };
+    const body = JSON.parse(text) as { routine?: unknown; module?: { module_id?: string } };
     if (!body.routine) {
       check(
         `session/next?module=${moduleId} returns no single-module plan`,
         false,
-        `200 with a plan for ${body.step?.module_id ?? 'unknown'} — selection still honoured`,
+        `200 with a plan for ${body.module?.module_id ?? 'unknown'} — selection still honoured`,
       );
       continue;
     }
@@ -91,6 +91,29 @@ async function main(): Promise<void> {
       `session/next?module=${moduleId} returns the full routine`,
       text === baselineText || JSON.stringify(body.routine) === JSON.stringify((baseline as { routine: unknown }).routine),
       'routine payload differs from the no-param request',
+    );
+  }
+
+  // The routine itself must be a fixed shape the client cannot reshape: one
+  // step per block, in block order, and every eligible module bound somewhere.
+  const routine = (baseline as { routine?: { steps?: { block: string; modules: { module_id: string }[] }[] } }).routine;
+  if (routine?.steps) {
+    const blocks = routine.steps.map((s) => s.block);
+    check(
+      'routine follows the fixed block order',
+      JSON.stringify(blocks) === JSON.stringify(['VOCAL', 'VECTOR', 'DICTATION', 'VISUOSPATIAL']),
+      `got ${JSON.stringify(blocks)}`,
+    );
+    const bound = routine.steps.flatMap((s) => s.modules.map((m) => m.module_id));
+    check(
+      'routine binds each module to exactly one block',
+      new Set(bound).size === bound.length,
+      `duplicate binding: ${JSON.stringify(bound)}`,
+    );
+    check(
+      'no block is empty once a candidate is calibrated',
+      routine.steps.every((s) => s.modules.length > 0),
+      'a block was served with zero modules',
     );
   }
 

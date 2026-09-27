@@ -23,7 +23,7 @@ interface ItemFeedback {
 }
 
 export function SessionRunner() {
-  const { user, pendingStep, go, setResult, setFault, refreshDashboard } = useForge();
+  const { user, pendingStep, pendingModuleOrder, go, setResult, setFault, refreshDashboard } = useForge();
   const [plan, setPlan] = useState<SessionPlan | null>(null);
   const [index, setIndex] = useState(0);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
@@ -54,7 +54,7 @@ export function SessionRunner() {
     setResult(null);
     setLocalResult(null);
     api
-      .nextSession(pendingStep)
+      .nextSession(pendingStep, pendingModuleOrder)
       .then(({ plan: p }) => {
         if (cancelled) return;
         setPlan(p);
@@ -64,7 +64,7 @@ export function SessionRunner() {
     return () => {
       cancelled = true;
     };
-  }, [user, pendingStep, setFault, setResult]);
+  }, [user, pendingStep, pendingModuleOrder, setFault, setResult]);
 
   const present = useCallback(
     async (next: DrillItem, activePlan: SessionPlan) => {
@@ -175,6 +175,7 @@ export function SessionRunner() {
       const res = await api.submitSession({
         session_id: plan.session_id,
         step: pendingStep,
+        m: pendingModuleOrder,
         attempts,
         started_at: new Date(Date.now() - (performance.now() - planLoadedAt.current)).toISOString(),
         ended_at: new Date().toISOString(),
