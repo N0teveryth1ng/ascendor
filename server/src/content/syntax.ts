@@ -38,24 +38,24 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
   },
   {
     id: 'S1-04', level: 'S1', construction: 'POSSESSION',
-    scaffold: 'The calibration log belongs ___ the candidate, not the trainer.',
+    scaffold: 'The parcel belongs ___ the neighbour, not the postman.',
     options: ['to', 'too', 'two'], expected: 'to', category: 'preposition_selection',
   },
   {
     id: 'S1-05', level: 'S1', construction: 'DEMONSTRATIVE',
-    scaffold: '___ of the two latency readings came from the cached window.',
+    scaffold: '___ of the two cakes came from the bakery.',
     options: ['One', 'Once', 'Won'], expected: 'One', category: 'lexical_selection',
   },
   {
     id: 'S1-06', level: 'S1', construction: 'COPULA SELECTION',
-    scaffold: 'The remediation window ___ longer than the logging block.',
+    scaffold: 'The queue at the crossing ___ longer than usual this morning.',
     options: ['is', 'are', 'be'], expected: 'is', category: 'voice_agreement',
   },
 
   /* ── S2: prepositional phrase attachment ────────────────────────────────── */
   {
     id: 'S2-01', level: 'S2', construction: 'PREPOSITION SELECTION',
-    scaffold: 'The drill focuses ___ disambiguating minimal pairs.',
+    scaffold: 'The lesson focuses ___ distinguishing similar sounds.',
     options: ['on', 'in', 'at'], expected: 'on', category: 'preposition_selection',
   },
   {
@@ -65,87 +65,87 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
   },
   {
     id: 'S2-03', level: 'S2', construction: 'TEMPORAL PREPOSITION',
-    scaffold: 'The recalculation runs ___ the logging block closes.',
+    scaffold: 'The train departs ___ the last passengers have boarded.',
     options: ['after', 'before', 'during'], expected: 'after', category: 'preposition_selection',
   },
   {
     id: 'S2-04', level: 'S2', construction: 'AGENT PREPOSITION',
-    scaffold: 'The threshold was recalculated ___ the pace engine.',
+    scaffold: 'The fence was repainted ___ the caretaker.',
     options: ['by', 'to', 'for'], expected: 'by', category: 'preposition_selection',
   },
   {
     id: 'S2-05', level: 'S2', construction: 'DURATION',
-    scaffold: 'Each remediation run lasts ___ ninety seconds.',
+    scaffold: 'Each guided rehearsal lasts ___ ninety seconds.',
     options: ['for', 'during', 'while'], expected: 'for', category: 'preposition_selection',
   },
   {
     id: 'S2-06', level: 'S2', construction: 'DEPENDENCY',
-    scaffold: 'Escalation depends ___ accuracy, not ___ speed.',
+    scaffold: 'The harvest depends ___ the weather, not ___ the season.',
     options: ['on', 'in', 'at'], expected: 'on', category: 'preposition_selection',
   },
 
   /* ── S3: present perfect + time reference ───────────────────────────────── */
   {
     id: 'S3-01', level: 'S3', construction: 'PRESENT PERFECT',
-    scaffold: 'The candidate ___ twelve sessions without a rank change.',
+    scaffold: 'The gardener ___ twelve lawns without a single complaint.',
     options: ['has completed', 'completed', 'had completed'], expected: 'has completed',
     category: 'tense_marker',
   },
   {
     id: 'S3-02', level: 'S3', construction: 'PAST SIMPLE VS PRESENT PERFECT',
-    scaffold: 'She ___ the calibration battery on Tuesday and ___ the drills since.',
+    scaffold: 'She ___ the short course on Tuesday and ___ the long course since.',
     options: ['completed / has run', 'has completed / ran', 'completed / ran'],
     expected: 'completed / has run', category: 'tense_marker',
   },
   {
     id: 'S3-03', level: 'S3', construction: 'JUST/ALREADY',
-    scaffold: 'The APE has ___ recalculated the threshold for this module.',
+    scaffold: 'The chef has ___ prepared the sauce for this dinner.',
     options: ['already', 'still', 'yet'], expected: 'already', category: 'lexical_selection',
   },
   {
     id: 'S3-04', level: 'S3', construction: 'SINCE/FOR',
-    scaffold: 'The lock has persisted ___ three consecutive sessions.',
+    scaffold: 'The rain has persisted ___ three consecutive days.',
     options: ['for', 'since', 'during'], expected: 'for', category: 'preposition_selection',
   },
   {
     id: 'S3-05', level: 'S3', construction: 'RECENTLY-COMPLETED ACTION',
-    scaffold: 'He ___ the dictation block twenty minutes ago.',
+    scaffold: 'He ___ the last chapter twenty minutes ago.',
     options: ['has just finished', 'finished', 'had finished'], expected: 'has just finished',
     category: 'tense_marker',
   },
   {
     id: 'S3-06', level: 'S3', construction: 'NEGATIVE PRESENT PERFECT',
-    scaffold: 'The candidate ___ miss the daily threshold all week.',
+    scaffold: 'The runner ___ miss a single training session all week.',
     options: ['has not', 'did not', 'was not'], expected: 'has not', category: 'tense_marker',
   },
 
   /* ── S4: past perfect ───────────────────────────────────────────────────── */
   {
     id: 'S4-01', level: 'S4', construction: 'PAST PERFECT',
-    scaffold: 'By the time the rank unlocked, she ___ every Phase 1 module.',
+    scaffold: 'By the time the concert ended, she ___ every box from the stage.',
     options: ['had cleared', 'has cleared', 'clears'], expected: 'had cleared',
     category: 'past_perfect_construction',
   },
   {
     id: 'S4-02', level: 'S4', construction: 'PAST PERFECT VS PAST SIMPLE',
-    scaffold: 'The threshold dropped because the engine ___ three tightening rounds already.',
+    scaffold: 'The road reopened because the crew ___ three coats of paint already.',
     options: ['had applied', 'has applied', 'applies'], expected: 'had applied',
     category: 'past_perfect_construction',
   },
   {
     id: 'S4-03', level: 'S4', construction: 'PAST PERFECT NEGATIVE',
-    scaffold: 'He never reported a Structural Lock because he ___ seen one before.',
+    scaffold: 'He never reported the broken stair because he ___ seen it before.',
     options: ["hadn't", "hasn't", "wasn't"], expected: "hadn't", category: 'past_perfect_construction',
   },
   {
     id: 'S4-04', level: 'S4', construction: 'MIXED TENSE SEQUENCE',
-    scaffold: 'When the alert fired, the system ___ already four sessions of decline.',
+    scaffold: 'When the storm ended, the river ___ already four days of flooding.',
     options: ['had recorded', 'has recorded', 'records'], expected: 'had recorded',
     category: 'past_perfect_construction',
   },
   {
     id: 'S4-05', level: 'S4', construction: 'PAST PERFECT MODAL',
-    scaffold: 'The candidate ___ the module three times before this attempt.',
+    scaffold: 'The climber ___ the summit three times before this attempt.',
     options: ['had passed', 'has passed', 'passes'], expected: 'had passed',
     category: 'past_perfect_construction',
   },
@@ -159,23 +159,23 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
   /* ── S5: passive voice ──────────────────────────────────────────────────── */
   {
     id: 'S5-01', level: 'S5', construction: 'PASSIVE VOICE',
-    scaffold: 'All failed modules ___ by the scheduler before midnight.',
+    scaffold: 'All the day tours ___ by the travel agent before the season began.',
     options: ['were scheduled', 'scheduled', 'are scheduled'], expected: 'were scheduled',
     category: 'passive_voice',
   },
   {
     id: 'S5-02', level: 'S5', construction: 'PASSIVE WITH AGENT',
-    scaffold: 'The lock was cleared ___ three consecutive clean sessions.',
+    scaffold: 'The hall was booked ___ three weeks in advance.',
     options: ['after', 'by', 'during'], expected: 'after', category: 'preposition_selection',
   },
   {
     id: 'S5-03', level: 'S5', construction: 'PASSIVE PRESENT PERFECT',
-    scaffold: 'The baseline stats ___ never been cut by a failure tier.',
+    scaffold: 'The old silent film ___ never been copied before this year.',
     options: ['have', 'had', 'are'], expected: 'have', category: 'passive_voice',
   },
   {
     id: 'S5-04', level: 'S5', construction: 'PASSIVE MODAL',
-    scaffold: 'Thresholds ___ be tightened only after a qualifying trend.',
+    scaffold: 'Old batteries ___ be replaced only after a full winter.',
     options: ['may', 'might', 'must'], expected: 'may', category: 'passive_voice',
   },
   {
@@ -183,82 +183,82 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
     // The gap was missing, so this shipped as a finished sentence whose three
     // options could not be applied to it. It is the active-voice counterpart to
     // S5-06's passive, and the options were already written for the gap.
-    scaffold: 'The pace engine ___ the threshold after three clean rounds.',
-    options: ['was recalculated', 'recalculated', 'had recalculate'], expected: 'recalculated',
+    scaffold: 'The young teacher ___ the exam papers after the long delay.',
+    options: ['was marked', 'marked', 'had mark'], expected: 'marked',
     category: 'passive_voice',
   },
   {
     id: 'S5-06', level: 'S5', construction: 'GET-PASSIVE ALTERNATIVE',
-    scaffold: 'The remediation run ___ scheduled twice because the first attempt failed.',
+    scaffold: 'The kitchen ___ repainted twice because the first attempt failed.',
     options: ['got', 'was', 'been'], expected: 'got', category: 'passive_voice',
   },
 
   /* ── S6: relative clauses ───────────────────────────────────────────────── */
   {
     id: 'S6-01', level: 'S6', construction: 'RESTRICTIVE RELATIVE',
-    scaffold: 'The candidates ___ train on independent tracks passed both audits.',
+    scaffold: 'The students ___ study in the evening class passed both exams.',
     options: ['who', 'which', 'that'], expected: 'who', category: 'relative_clause',
   },
   {
     id: 'S6-02', level: 'S6', construction: 'RELATIVE PRONOUN AGREEMENT',
-    scaffold: 'The metric ___ measures character accuracy is the Precision Index.',
+    scaffold: 'The lamp ___ stands beside the sofa is the old one.',
     options: ['which', 'who', 'whose'], expected: 'which', category: 'relative_clause',
   },
   {
     id: 'S6-03', level: 'S6', construction: 'POSSESSIVE RELATIVE',
-    scaffold: '___ name is attached to the Personal Calibration Profile?',
+    scaffold: '___ bicycle is chained to the railings outside?',
     options: ['Whose', 'Who', 'Which'], expected: 'Whose', category: 'relative_clause',
   },
   {
     id: 'S6-04', level: 'S6', construction: 'NON-RESTRICTIVE RELATIVE',
-    scaffold: 'Billi, ___ trains in the morning block, cleared Phase 2 last week.',
+    scaffold: 'Priya, ___ teaches swimming on Tuesdays, retired last spring.',
     options: ['who', 'that', 'which'], expected: 'who', category: 'relative_clause',
   },
   {
     id: 'S6-05', level: 'S6', construction: 'REDUCED RELATIVE',
-    scaffold: 'The metrics ___ from the last eight sessions are shown in the header.',
+    scaffold: 'The totals ___ from the last eight weeks are chalked on the board.',
     options: ['computed', 'computing', 'to compute'], expected: 'computed',
     category: 'relative_clause',
   },
   {
     id: 'S6-06', level: 'S6', construction: 'RELATIVE CLAUSE + TENSE',
-    scaffold: 'The window ___ the engine recalculates spans eight sessions.',
+    scaffold: 'The room ___ the children use for music has a new piano.',
     options: ['in which', 'which', 'that'], expected: 'in which', category: 'relative_clause',
   },
 
   /* ── S7: conditionals ───────────────────────────────────────────────────── */
   {
     id: 'S7-01', level: 'S7', construction: 'FIRST CONDITIONAL',
-    scaffold: 'If the accuracy trend rises, the engine ___ the threshold.',
+    scaffold: 'If the queue grows, the baker ___ the schedule.',
     options: ['will tighten', 'tightens', 'tightened'], expected: 'will tighten',
     category: 'conditional_construction',
   },
   {
     id: 'S7-02', level: 'S7', construction: 'SECOND CONDITIONAL',
-    scaffold: 'If the system ___ overtuned, drills would be impossible regardless of skill.',
+    scaffold: 'If the instrument ___ badly tuned, the concert would sound wrong regardless of skill.',
     options: ['were', 'is', 'has been'], expected: 'were', category: 'conditional_construction',
   },
   {
     id: 'S7-03', level: 'S7', construction: 'THIRD CONDITIONAL',
-    scaffold: 'If the candidate had trained last month, the rank would already ___ unlocked.',
+    scaffold: 'If she had left an hour earlier, she would already ___ home.',
     options: ['have', 'have been', 'had been'], expected: 'have been',
     category: 'conditional_construction',
   },
   {
     id: 'S7-04', level: 'S7', construction: 'UNREAL CONDITIONAL MIX',
-    scaffold: 'If she were less precise, her reflex latency ___ lower but her accuracy lower still.',
+    scaffold: 'If he were less careful, his handwriting ___ neater but his reading slower still.',
     options: ['would be', 'will be', 'is'], expected: 'would be',
     category: 'conditional_construction',
   },
   {
     id: 'S7-05', level: 'S7', construction: 'CONDITIONAL INVERSION',
-    scaffold: '___ the trend hold, the APE will hold the factor at 1.00.',
+    scaffold: '___ the weather hold, the ferry will sail at six.',
     options: ['Should', 'Would', 'Could'], expected: 'Should',
     category: 'conditional_construction',
   },
   {
     id: 'S7-06', level: 'S7', construction: 'ZERO CONDITIONAL',
-    scaffold: 'If a threshold is breached, the session ___ a STREAK_TERMINATED tag.',
+    scaffold: 'If a fuse blows, the lamp ___ a faint hum.',
     options: ['receives', 'received', 'would receive'], expected: 'receives',
     category: 'conditional_construction',
   },
@@ -266,35 +266,35 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
   /* ── S8: multi-clause synthesis ─────────────────────────────────────────── */
   {
     id: 'S8-01', level: 'S8', construction: 'TEMPORAL CLAUSE + PAST PERFECT',
-    scaffold: 'After the engine ___ tightened the threshold, accuracy fell below the band.',
+    scaffold: 'After the baker ___ finished the icing, the guests arrived.',
     options: ['had', 'has', 'was'], expected: 'had', category: 'past_perfect_construction',
   },
   {
     id: 'S8-02', level: 'S8', construction: 'CONDITIONAL + PASSIVE',
-    scaffold: 'If the lock had been cleared, the module ___ have escalated on time.',
+    scaffold: 'If the road had been gritted earlier, the buses ___ have arrived on time.',
     options: ['would', 'will', 'would of'], expected: 'would',
     category: 'conditional_construction',
   },
   {
     id: 'S8-03', level: 'S8', construction: 'RELATIVE + CONDITIONAL',
-    scaffold: 'The candidate who ___ in the morning block faces a different latency baseline.',
+    scaffold: 'The swimmer who ___ in the early block has an empty lane.',
     options: ['trains', 'trained', 'would train'], expected: 'trains',
     category: 'relative_clause',
   },
   {
     id: 'S8-04', level: 'S8', construction: 'CONCESSIVE CLAUSE',
-    scaffold: '___ the accuracy was high, the latency failed the threshold twice.',
+    scaffold: '___ the road was dry, the car skidded twice.',
     options: ['Although', 'Because', 'Unless'], expected: 'Although',
     category: 'conditional_construction',
   },
   {
     id: 'S8-05', level: 'S8', construction: 'NESTED CONDITIONAL',
-    scaffold: 'If the recalculation runs, and the trend holds, the factor stays ___ 1.00.',
+    scaffold: 'If the rehearsal starts on time, and the choir arrives, the concert begins ___ six.',
     options: ['at', 'to', 'in'], expected: 'at', category: 'preposition_selection',
   },
   {
     id: 'S8-06', level: 'S8', construction: 'REPORTED SPEECH TENSE',
-    scaffold: 'The system reported that the threshold ___ already recalculated.',
+    scaffold: 'The manager reported that the invoice ___ already approved.',
     options: ['had been', 'has been', 'was being'], expected: 'had been',
     category: 'past_perfect_construction',
   },

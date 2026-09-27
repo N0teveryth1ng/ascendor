@@ -5,6 +5,7 @@ import { SYNTAX_LEVELS } from '../content/syntax.js';
 import { C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
 import { C2_ITEMS_PER_LEVEL } from '../content/calibrationC2.js';
 import { MAX_STREAM_WPM, MIN_STREAM_WPM } from '../content/index.js';
+import { BURST_GROUPS } from '../content/vocal.js';
 
 import { HttpError } from './httpError.js';
 import {
@@ -142,6 +143,45 @@ function assertC2LevelAccuracy(levelAccuracy: unknown): void {
  * outside that range cannot have come from the content pipeline. Accepting one
  * anyway would seed the ladder from a number the engine could never produce.
  */
+/**
+ * C4 measures vocal clarity per phoneme class from the microphone. Every
+ * candidate-facing class must be present with a real measured level: the
+ * derivation compares each class against the mean of the others, so a missing
+ * class does not merely lose data, it silently raises the bar the remaining ones
+ * must clear. An empty map produces no flags and a clarity baseline of zero,
+ * which is the same profile as a candidate who said nothing at all.
+ */
+export function assertC4ClarityByClass(map: unknown): void {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) {
+    throw new HttpError(400, 'C4 pass requires clarity_by_class measured from the microphone');
+  }
+  const entries = Object.entries(map as Record<string, unknown>);
+  if (entries.length === 0) {
+    throw new HttpError(
+      400,
+      'C4 pass has an empty clarity_by_class. A vector with no measured clarity is indistinguishable ' +
+        'from a silent one, and would seed a clarity baseline of zero.',
+    );
+  }
+  for (const [cls, value] of entries) {
+    if (!(cls in BURST_GROUPS)) {
+      throw new HttpError(400, `C4 clarity_by_class has unknown phoneme class '${cls}'`);
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+      throw new HttpError(400, `C4 clarity for '${cls}' must be a level between 0 and 100, got ${String(value)}`);
+    }
+    // A level of exactly zero is silence, not clarity. The client now drops such
+    // items rather than reporting them, so a zero here means a hand-built payload.
+    if (value === 0) {
+      throw new HttpError(
+        400,
+        `C4 clarity for '${cls}' is 0, which means the meter saw no audio for that item. ` +
+          'Report the classes you actually measured.',
+      );
+    }
+  }
+}
+
 function assertC3Wpm(wpm: unknown): void {
   if (wpm === undefined || wpm === null) {
     throw new HttpError(400, 'C3 pass requires wpm');
@@ -168,6 +208,7 @@ export async function recordPass(
   if (vector === 'C1') assertC1BandAccuracy(data.band_accuracy);
   if (vector === 'C2') assertC2LevelAccuracy(data.level_accuracy);
   if (vector === 'C3') assertC3Wpm(data.wpm);
+  if (vector === 'C4') assertC4ClarityByClass(data.clarity_by_class);
 
   const total = Number(data.total ?? 0);
   const correct = Number(data.correct ?? 0);
@@ -255,6 +296,11 @@ const MAX_PASS_LATENCY_MS = 120_000;
 
 export function assertPassIntegrity(passes: RawPass[]): void {
   for (const p of passes) {
+    // A stored C4 row with no measured clarity is inert rather than wrong: it
+    // derives a baseline of zero and flags nothing, which is the profile of a
+    // candidate who never spoke. Re-read it on the way into a PCP too, so a row
+    // written before the write guard existed cannot seed the profile.
+    if (p.vector === 'C4') assertC4ClarityByClass(p.clarity_by_class);
     if (!Number.isInteger(p.correct) || !Number.isInteger(p.total) || p.total <= 0) {
       throw new HttpError(400, `${p.vector}/${p.pass_type} has invalid item counts (${p.correct}/${p.total}).`);
     }

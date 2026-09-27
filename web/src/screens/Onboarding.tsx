@@ -125,12 +125,24 @@ export function Onboarding() {
       if (!item) return;
       const latency = performance.now() - presentedAt.current;
       if (view?.voice && mic) {
+        // Start a fresh measurement window so this peak describes this utterance.
+        // Without the reset the meter is a running maximum for the whole pass,
+        // so one loud burst would set the clarity score for every phoneme class
+        // recorded after it.
+        mic.resetPeak();
         await recordFor(mic.stream, Math.min(4000, Math.max(700, latency)));
-        // Snapshot the mic for THIS item. `peak()` is a running session maximum,
-        // so this is the observed level by the end of this item's recording; it
-        // is real measured data and lets C4 score a phoneme class instead of
-        // hardcoding an empty map.
-        setMicPeaks((m) => ({ ...m, [item.item_id]: mic.peak() }));
+        const peak = mic.peak();
+        // A peak of zero means the meter never saw this utterance: the recording
+        // produced no usable audio. Recording that as a clarity of 0 would score
+        // a silent item as the candidate's worst possible articulation.
+        if (peak > 0) {
+          setMicPeaks((m) => ({ ...m, [item.item_id]: peak }));
+        } else {
+          setMicPeaks((m) => {
+            const { [item.item_id]: _dropped, ...rest } = m;
+            return rest;
+          });
+        }
       }
       // The first pass scores content only so it measures comfort, not speed.
       const effective = timed ? latency : item.threshold_ms / 2;

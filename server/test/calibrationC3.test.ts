@@ -17,6 +17,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { STREAMS, streamsForBand } from '../src/content/comprehension.js';
+import { SYNTAX_TASKS } from '../src/content/syntax.js';
+import { SYNTAX_TASKS } from '../src/content/syntax.js';
 import { BAND_ORDER } from '../src/content/vocab.js';
 import { computeC3 } from '../src/core/calibration.js';
 import { MAX_STREAM_WPM, MIN_STREAM_WPM } from '../src/content/index.js';
@@ -112,4 +114,55 @@ test('a pass whose accuracy contradicts its own item counts is refused', () => {
   assert.throws(() => assertPassIntegrity([{ ...honest, total: 0 }]), /invalid item counts/);
   assert.throws(() => assertPassIntegrity([{ ...honest, accuracy_pct: undefined }]), /missing its stored accuracy/);
   assert.throws(() => assertPassIntegrity([{ ...honest, mean_latency_ms: -1 }]), /implausible mean latency/);
+});
+
+/**
+ * Candidate-facing text must not describe the machinery. Both authored banks
+ * were originally written in the engine's own vocabulary, so a candidate was
+ * asked to find the wrong word in a sentence about thresholds and locks, and to
+ * complete constructions about the APE holding a factor. That leaks how the
+ * system works and, worse, makes the task depend on words the candidate has no
+ * reason to know. The banks are now neutral everyday language, and this test is
+ * what keeps them that way.
+ */
+const INTERNALS = [
+  'ape', 'structural lock', 'phase 1', 'phase 2', 'calibration', 'profile',
+  'drill', 'trainer', 'candidate', 'module', 'threshold', 'reflex',
+  'latency', 'band', 'escalation', 'lock', 'streak', 'rank', 'rolling window',
+  'recalculation', 'recalculate', 'factor', 'trend', 'baseline', 'remediation',
+  'pace engine', 'engine', 'anchor', 'bayesian', 'glicko', 'precision index',
+  'streak_terminated', 'wpm', 'vector', 'ceiling', 'syntax', 'dictation',
+];
+
+function assertNoInternals(text: string, where: string): void {
+  for (const term of INTERNALS) {
+    // Word-boundary match, so `engineer` does not trip `engine` and `block` does
+    // not trip `lock`, but a genuine mention anywhere in the prose does.
+    const re = new RegExp(`(^|[^a-z])${term}([^a-z]|$)`, 'i');
+    assert.ok(!re.test(text), `${where} exposes the internal term '${term}': ${text}`);
+  }
+}
+
+test('no stream shows the candidate the internal vocabulary', () => {
+  for (const s of STREAMS) {
+    // The whole spoken sentence is candidate-facing, and the answer key is shown
+    // in the prompt detail, so both are checked.
+    assertNoInternals(s.tokens.join(' '), `${s.id} stream`);
+    assertNoInternals(s.corrected, `${s.id} correction`);
+  }
+});
+
+test('no C2 construction shows the candidate the internal vocabulary', () => {
+  for (const t of SYNTAX_TASKS) {
+    assertNoInternals(t.scaffold, `${t.id} scaffold`);
+    for (const o of t.options) assertNoInternals(o, `${t.id} option`);
+  }
+});
+
+test('no C2 construction names a particular candidate', () => {
+  // The bank is drawn per candidate, so a name in the prose is shown to whoever
+  // draws that task rather than to the person it was written about.
+  for (const t of SYNTAX_TASKS) {
+    assert.ok(!/\bbilli\b/i.test(t.scaffold), `${t.id} names a candidate in its prose: ${t.scaffold}`);
+  }
 });

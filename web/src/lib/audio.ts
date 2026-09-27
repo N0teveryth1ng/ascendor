@@ -95,8 +95,14 @@ export function cancelSpeech(): void {
 export interface MicCapture {
   stream: MediaStream;
   stop: () => Promise<Blob | null>;
-  /** Peak amplitude observed so far, 0..1. */
+  /** Peak amplitude observed since the meter was last reset, 0..1. */
   peak: () => number;
+  /**
+   * Begins a new measurement window. Call this before each recording: a peak is
+   * only meaningful for the utterance it was taken from, and a running maximum
+   * carries the loudest moment of the whole session into every later item.
+   */
+  resetPeak: () => void;
 }
 
 /**
@@ -137,6 +143,9 @@ export async function openMic(): Promise<MicCapture | null> {
     return {
       stream,
       peak: () => peakLevel,
+      resetPeak: () => {
+        peakLevel = 0;
+      },
       stop: async () => {
         cancelAnimationFrame(raf);
         for (const t of stream.getTracks()) t.stop();
