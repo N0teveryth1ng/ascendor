@@ -17,16 +17,16 @@ import type { Attempt, CalibrationPass, DrillItem, Onboarding } from '@/types';
  *
  * Items come from `/calibration/probe`, the one session-plan path that is
  * deliberately NOT PCP-gated: the battery produces the PCP, so gating it here
- * would make calibration unreachable. Each vector draws from the module whose
- * generated content actually measures it.
+ * would make calibration unreachable.
+ *
+ * The client asks for a vector and the server decides which content measures
+ * it. This file used to hold a vector-to-module map, and that indirection is
+ * exactly how C1 came to be wired to P3_SSM — a slot-reasoning module whose
+ * prompt text is APE rule logic, shown to candidates as a vocabulary probe. The
+ * C1 pass then keyed its band scores by splitting item_id on '-', which yielded
+ * pattern ids rather than vocabulary bands, so every candidate's C1 collapsed
+ * to a hardcoded V1 at 0% accuracy.
  */
-const PROBE_MODULE: Record<Vector, string> = {
-  C1: 'P3_SSM', // LEXICAL RANGE  -> band-gated slot items
-  C2: 'P1_VD', // SYNTAX CEILING -> pattern construction
-  C3: 'P3_HVS', // AURAL SPEED    -> timed streams
-  C4: 'P1_VM', // ARTICULATION   -> bursts + read-aloud
-  C5: 'P2_RDI', // ORTHOGRAPHIC    -> dictation
-};
 const VECTORS = ['C1', 'C2', 'C3', 'C4', 'C5'] as const;
 type Vector = (typeof VECTORS)[number];
 type PassType = 'untimed' | 'timed';
@@ -48,6 +48,8 @@ export function Onboarding() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [mic, setMic] = useState<MicCapture | null>(null);
+  /** Per-item mic peak captured at the end of that item's recording. */
+  const [micPeaks, setMicPeaks] = useState<Record<string, number>>({});
   const [micLive, setMicLive] = useState(false);
 
   const item = items[index] ?? null;
@@ -89,7 +91,7 @@ export function Onboarding() {
     setLoading(true);
     setLoadError(null);
     try {
-      const { plan } = await api.calibrationProbe(PROBE_MODULE[vector]);
+      const { plan } = await api.calibrationProbe(vector, passType);
       if (!plan.items.length) throw new Error('No items available for this step.');
       setItems(plan.items);
       setIndex(0);
@@ -122,8 +124,13 @@ export function Onboarding() {
     async (text: string | null) => {
       if (!item) return;
       const latency = performance.now() - presentedAt.current;
-        if (view?.voice && mic) {
+      if (view?.voice && mic) {
         await recordFor(mic.stream, Math.min(4000, Math.max(700, latency)));
+        // Snapshot the mic for THIS item. `peak()` is a running session maximum,
+        // so this is the observed level by the end of this item's recording; it
+        // is real measured data and lets C4 score a phoneme class instead of
+        // hardcoding an empty map.
+        setMicPeaks((m) => ({ ...m, [item.item_id]: mic.peak() }));
       }
       // The first pass scores content only so it measures comfort, not speed.
       const effective = timed ? latency : item.threshold_ms / 2;
@@ -141,7 +148,7 @@ export function Onboarding() {
   const record = useCallback(async () => {
     if (!user) return;
     setSaving(true);
-    const pass = buildPass(vector, passType, attempts, items, mic);
+    const pass = buildPass(vector, passType, attempts, items, mic, micPeaks);
     const nextLog = [...log, pass];
     setLog(nextLog);
     try {
@@ -418,6 +425,7 @@ function buildPass(
   attempts: Attempt[],
   items: DrillItem[],
   mic: MicCapture | null,
+  micPeaks: Record<string, number> = {},
 ): CalibrationPass {
   const total = attempts.length;
   const pass: CalibrationPass = {
@@ -429,10 +437,30 @@ function buildPass(
   };
 
   if (vector === 'C1') {
-    const byBand: Record<string, number> = {};
+    // The band comes off the item payload, never from splitting item_id. The
+    // old version did item_id.split('-')[2], which for a P3_SSM slot item is a
+    // pattern id, not a vocabulary band: every score landed under a key that
+    // computeC1 does not recognise, so the vector silently resolved to V1 at 0%.
+    //
+    // These are percentages, not counts. deriveVocabularyBand gates on `>= 90`
+    // and computeC1 divides by 100, so accumulating a count here capped every
+    // band below the threshold and forced V1 even when the keys were right.
+    const correctByBand: Record<string, number> = {};
+    const totalByBand: Record<string, number> = {};
     for (const a of attempts) {
-      const band = a.item_id.split('-')[2] ?? 'V1';
-      byBand[band] = (byBand[band] ?? 0) + (a.correct ? 1 : 0);
+      const item = items.find((i) => i.item_id === a.item_id);
+      if (!item || item.kind !== 'vocab') {
+        throw new Error(
+          `Calibration C1 received a non-vocabulary item (${a.item_id}). ` +
+            'A C1 score cannot be derived from this; refusing to record a fabricated band.',
+        );
+      }
+      totalByBand[item.band] = (totalByBand[item.band] ?? 0) + 1;
+      if (a.correct) correctByBand[item.band] = (correctByBand[item.band] ?? 0) + 1;
+    }
+    const byBand: Record<string, number> = {};
+    for (const [band, total] of Object.entries(totalByBand)) {
+      byBand[band] = Math.round(((correctByBand[band] ?? 0) / total) * 100);
     }
     pass.band_accuracy = byBand;
   }
@@ -442,7 +470,29 @@ function buildPass(
   }
   if (vector === 'C4') {
     pass.clarity = Math.round((mic?.peak() ?? 0) * 100);
-    pass.phoneme_classes = {};
+    // Per-phoneme clarity, grouped by the class each burst item targets. This
+    // was a hardcoded `{}`: the server derives `flagged_weak_vectors` from these
+    // values and needs at least two classes, so C4 could never flag anything and
+    // the vector's whole purpose was inert. Values come from the per-item mic
+    // snapshots taken during the pass, not from the session total repeated
+    // once per item.
+    const totalByClass: Record<string, number> = {};
+    const sumByClass: Record<string, number> = {};
+    for (const a of attempts) {
+      const it = items.find((i) => i.item_id === a.item_id);
+      if (!it || it.kind !== 'burst') continue;
+      const peak = micPeaks[it.item_id];
+      if (typeof peak !== 'number') continue;
+      const pct = Math.round(Math.min(1, Math.max(0, peak)) * 100);
+      totalByClass[it.group] = (totalByClass[it.group] ?? 0) + 1;
+      sumByClass[it.group] = (sumByClass[it.group] ?? 0) + pct;
+    }
+    const byClass: Record<string, number> = {};
+    for (const [group, n] of Object.entries(totalByClass)) {
+      byClass[group] = Math.round((sumByClass[group]! / n) * 100) / 100;
+    }
+    pass.clarity_by_class = byClass;
+    pass.phoneme_classes = byClass;
   }
   if (vector === 'C5') {
     const typos = attempts.filter((a) => a.error_code === 'TYPO_DETECTED').length;

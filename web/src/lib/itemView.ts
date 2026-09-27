@@ -51,6 +51,34 @@ function rateHint(wpm: number | undefined): number | undefined {
 
 export function itemView(item: DrillItem): ItemView {
   switch (item.kind) {
+    case 'vocab':
+      // Calibration C1. Recognition shows the word and asks for it; production
+      // says nothing and asks for the word back from audio alone. The body is
+      // the word itself and never a phrase.
+      return item.direction === 'recognition'
+        ? {
+            id: item.item_id,
+            prompt: `Which word is this? (${item.band_label})`,
+            body: item.word,
+            options: item.options,
+            durationMs: item.threshold_ms,
+            timed: false,
+            inputless: false,
+            voice: false,
+            typoSensitive: false,
+          }
+        : {
+            id: item.item_id,
+            prompt: 'Type the word you hear.',
+            body: '',
+            speech: { text: item.audio_cue },
+            durationMs: item.threshold_ms,
+            timed: false,
+            inputless: false,
+            voice: false,
+            typoSensitive: false,
+          };
+
     case 'pattern':
       return {
         id: item.item_id,
@@ -204,6 +232,7 @@ export function itemAnswer(item: DrillItem): string {
     case 'microtext':
     case 'slot':
     case 'stream':
+    case 'vocab':
       return item.expected;
     case 'burst':
       return item.token;

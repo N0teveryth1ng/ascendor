@@ -36,6 +36,24 @@ interface ItemBase {
 
 export type DrillItem =
   | (ItemBase & {
+      /**
+       * Calibration C1. A single word from the Section 5.4 bank plus its audio
+       * cue, and nothing else. `assertVocabularyItems` refuses to serve any
+       * `vocab` item that is not exactly this shape.
+       */
+      kind: 'vocab';
+      band: VocabularyBand;
+      band_label: string;
+      word: string;
+      audio_cue: string;
+      /** See the word and pick it, or hear it and type it. */
+      direction: 'recognition' | 'production';
+      options: string[];
+      expected: string;
+      category: ErrorCategory;
+      mode: 'pattern';
+    })
+  | (ItemBase & {
       kind: 'pattern';
       pair: [string, string];
       marker: string;

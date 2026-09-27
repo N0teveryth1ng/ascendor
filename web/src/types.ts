@@ -230,6 +230,23 @@ export interface RankEvaluation {
  */
 export type DrillItem =
   | (ItemBase & {
+      /**
+       * Calibration C1. A single word from the Section 5.4 band bank plus its
+       * audio cue, and nothing else. The server refuses to serve a `vocab` item
+       * that is not exactly this shape.
+       */
+      kind: 'vocab';
+      band: VocabularyBand;
+      band_label: string;
+      word: string;
+      audio_cue: string;
+      direction: 'recognition' | 'production';
+      options: string[];
+      expected: string;
+      category: ErrorCategory;
+      mode: 'pattern';
+    })
+  | (ItemBase & {
       kind: 'pattern';
       pair: [string, string];
       marker: string;
@@ -422,6 +439,8 @@ export interface CalibrationPass {
   level_accuracy?: Record<string, number>;
   wpm?: number;
   clarity?: number;
+  /** C4: per-phoneme-class clarity. The engine reads this, not `phoneme_classes`. */
+  clarity_by_class?: Record<string, number>;
   phoneme_classes?: Record<string, number>;
   typo_vulnerability_index?: number;
 }

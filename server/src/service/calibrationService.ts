@@ -1,5 +1,7 @@
-import type { CalibrationVectorId, CandidateId, Pcp } from '../core/types.js';
+import type { CalibrationVectorId, CandidateId, Pcp, VocabularyBand } from '../core/types.js';
 import { buildPcp, type RawPass } from '../core/calibration.js';
+import { BAND_ORDER } from '../content/vocab.js';
+import { HttpError } from './httpError.js';
 import {
   bootstrapCandidate,
   candidateExists,
@@ -34,6 +36,42 @@ export async function calibrationStatus(candidateId: CandidateId): Promise<{
   };
 }
 
+/**
+ * C1 band scores are only meaningful if the keys are real vocabulary bands and
+ * the values are percentages. `deriveVocabularyBand` walks BAND_ORDER and stops
+ * at the first key it does not recognise, so a malformed map is not an error
+ * there — it silently yields V1. That is precisely how a corrupt pass reached
+ * the database: the client keyed scores by a slot-item id, and the engine
+ * recorded a V1 baseline as though the measurement were real. Reject at the
+ * write boundary instead of storing a number that cannot be interpreted.
+ */
+function assertC1BandAccuracy(bandAccuracy: unknown): void {
+  if (bandAccuracy === undefined || bandAccuracy === null) {
+    throw new HttpError(400, 'C1 pass requires band_accuracy');
+  }
+  if (typeof bandAccuracy !== 'object' || Array.isArray(bandAccuracy)) {
+    throw new HttpError(400, 'C1 band_accuracy must be an object keyed by vocabulary band');
+  }
+  const keys = Object.keys(bandAccuracy as Record<string, unknown>);
+  if (keys.length === 0) throw new HttpError(400, 'C1 band_accuracy is empty');
+  for (const key of keys) {
+    if (!BAND_ORDER.includes(key as VocabularyBand)) {
+      throw new HttpError(
+        400,
+        `C1 band_accuracy key ${JSON.stringify(key)} is not a vocabulary band (expected V1-V12). ` +
+          'Scores must be keyed by the band on the served item, never by a parsed item id.',
+      );
+    }
+    const value = (bandAccuracy as Record<string, unknown>)[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+      throw new HttpError(
+        400,
+        `C1 band_accuracy[${key}] must be a percentage 0-100, got ${JSON.stringify(value)}`,
+      );
+    }
+  }
+}
+
 export async function recordPass(
   candidateId: CandidateId,
   vector: string,
@@ -41,6 +79,7 @@ export async function recordPass(
   data: Omit<RawPass, 'vector' | 'pass_type'>,
 ): Promise<void> {
   await ensureCandidate(candidateId);
+  if (vector === 'C1') assertC1BandAccuracy(data.band_accuracy);
   await insertCalibrationPass({
     candidateId,
     vector,

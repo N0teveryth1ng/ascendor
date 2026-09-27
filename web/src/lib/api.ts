@@ -83,8 +83,14 @@ export const api = {
 
   /* calibration — subject is the session cookie, never a URL segment */
   calibrationStatus: () => request<CalibrationStatus>('/calibration'),
+  /**
+   * Calibration asks for a vector, never a module. The client used to name a
+   * module per vector, and that indirection is how C1 came to serve APE rule
+   * text instead of vocabulary; the mapping is server-owned now.
+   */
   calibrationBattery: () => request<{ vectors: Record<string, unknown> }>('/calibration/battery'),
-  calibrationProbe: (module: string) => request<{ plan: SessionPlan }>(`/calibration/probe?module=${module}`),
+  calibrationProbe: (vector: 'C1' | 'C2' | 'C3' | 'C4' | 'C5', passType: 'untimed' | 'timed' = 'untimed') =>
+    request<{ plan: SessionPlan }>(`/calibration/probe?vector=${vector}&pass_type=${passType}`),
   recordPass: (pass: unknown) => post<unknown>('/calibration/passes', pass),
   finalise: (passes: unknown[], recalibrate = false) =>
     post<{ pcp: unknown; profile: CandidateProfile }>('/calibration/finalise', { passes, recalibrate }),

@@ -10,7 +10,7 @@ import {
   recordPass,
   requirePcp,
 } from '../service/calibrationService.js';
-import { buildSession, type DelayedScenePayload } from '../content/index.js';
+import { buildSession, type DelayedScenePayload, type SessionPlan } from '../content/index.js';
 import { planFor } from '../service/sessionPlan.js';
 import {
   activeLocks,
@@ -30,6 +30,7 @@ import {
 } from '../db/repo.js';
 import { GateError, applyDailyTier, processSessionResult } from '../service/sessionService.js';
 import { buildDailyRoutine, rejectModuleParam, resolveStepModule } from '../service/dailyRoutine.js';
+import { assertVocabularyItems, buildC1Items, C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
 import { buildArchiveRows, recordExerciseAttempts } from '../service/exerciseArchive.js';
 import { buildDailySchedule } from '../core/scheduler.js';
 import { evaluateRanks, MASTER_WINDOW_DAYS } from '../core/ranks.js';
@@ -126,6 +127,21 @@ function handleCalibrationBatteryRoute(req: Request, res: Response): void {
 }
 
 /**
+ * Vector -> content for C2-C5. Server-owned: the client used to hold this map,
+ * which is how C1 ended up pointing at a slot-reasoning module. C1 does not
+ * appear here because it is served from the vocabulary bank, not a module.
+ */
+const CALIBRATION_PROBE_MODULE: Record<string, ModuleId> = {
+  C2: 'P1_VD',
+  C3: 'P3_HVS',
+  C4: 'P1_VM',
+  C5: 'P2_RDI',
+};
+
+/** Neutral threshold for calibration items; never a real APE threshold. */
+const PROBE_THRESHOLD_MS = 2400;
+
+/**
  * Battery item source for a fresh, uncalibrated candidate.
  *
  * This is the one session-plan path that is deliberately NOT PCP-gated: the
@@ -133,11 +149,53 @@ function handleCalibrationBatteryRoute(req: Request, res: Response): void {
  * calibration unreachable and Onboarding's Start button a dead end. It builds a
  * plan against a neutral, never-persisted probe profile and writes no engine
  * state — grading still comes exclusively from the recorded passes.
+ *
+ * Served by VECTOR, not by module. The client used to name a module per vector
+ * and that indirection is what let C1 be wired to P3_SSM, serving APE rule text
+ * as a vocabulary probe. The vector-to-content mapping now lives here, in one
+ * place, and C1 is guarded so non-vocabulary content cannot be served at all.
  */
 async function handleCalibrationProbe(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
   await loadCandidate(id);
-  const moduleId = String(req.query.module ?? 'P1_VD') as ModuleId;
+
+  const vector = String(req.query.vector ?? '');
+  if (!['C1', 'C2', 'C3', 'C4', 'C5'].includes(vector)) {
+    throw new HttpError(400, 'vector must be C1|C2|C3|C4|C5');
+  }
+  const passType = req.query.pass_type === 'timed' ? 'timed' : 'untimed';
+
+  if (vector === 'C1') {
+    // The real word bank. Guarded: a non-vocabulary payload 500s here rather
+    // than reaching a candidate screen.
+    const items = buildC1Items(id, passType, PROBE_THRESHOLD_MS);
+    assertVocabularyItems(items, 'GET /calibration/probe?vector=C1');
+    res.json({
+      plan: {
+        session_id: `probe-${vector}-${passType}`,
+        module_id: 'C1_CALIBRATION',
+        phase: 1,
+        sublevel: 1,
+        item_count: items.length,
+        threshold_ms: PROBE_THRESHOLD_MS,
+        speed_multiplier: 1,
+        params: {
+          flash_duration_ms: null,
+          display_ms: null,
+          swap_interval_ms: null,
+          wpm: null,
+        },
+        items,
+      } as unknown as SessionPlan,
+    });
+    return;
+  }
+
+  // C2-C5 keep their existing module-backed content for now; the audit found
+  // C2 mis-served and C3/C5 not using their authored battery content, which is
+  // tracked separately rather than rewritten blind. The mapping is server-owned
+  // from here on, so those can move without another client change.
+  const moduleId = CALIBRATION_PROBE_MODULE[vector]!;
   const { plan } = await planFor(id, moduleId, { gated: false });
   res.json({ plan });
 }
@@ -154,7 +212,11 @@ function calibrationBattery() {
         name: 'LEXICAL RANGE',
         method: 'recognition + production across 12 frequency-banded word sets',
         bands: BAND_ORDER.map((b) => ({ band: b, ...VOCAB_BANDS[b] })),
-        items_per_band: 8,
+        // One word per band. This advertises 8 while serving a different count,
+        // so the vector's own description disagreed with the pass the candidate
+        // was asked to complete.
+        items_per_band: C1_ITEMS_PER_BAND,
+        item_count: BAND_ORDER.length * C1_ITEMS_PER_BAND,
       },
       C2: {
         name: 'SYNTAX CEILING',

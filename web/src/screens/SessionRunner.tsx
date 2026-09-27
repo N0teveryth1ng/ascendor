@@ -412,6 +412,8 @@ function Prompt({ item, speechOk, onSpeech }: { item: DrillItem; speechOk: boole
  */
 function promptPayload(item: DrillItem): unknown {
   switch (item.kind) {
+    case 'vocab':
+      return { kind: 'vocab', item_id: item.item_id, prompt: item.word, band: item.band, direction: item.direction };
     case 'pattern':
       return { kind: 'pattern', item_id: item.item_id, prompt: `Which fits: ${item.pair[0]} / ${item.pair[1]}`, pair: item.pair };
     case 'syntax':
