@@ -50,11 +50,46 @@ for (const [email, password] of [
   const cookie = await login(email, password);
 
   const prof = await fetch(`${base}/api/profile`, { headers: { cookie } });
-  const body = (await prof.json()) as { profile?: Record<string, unknown>; sessions?: unknown[]; modules?: unknown[] };
+  const body = (await prof.json()) as {
+    profile?: {
+      pcp?: unknown;
+      current_rank?: string;
+      rank_history?: unknown[];
+      daily_log?: unknown[];
+      active_structural_locks?: unknown[];
+      streak?: { current?: number; best?: number };
+    };
+    sessions?: unknown[];
+    modules?: unknown[];
+  };
   const p = body.profile ?? {};
   console.log(`  /api/profile        ${prof.status}`);
-  console.log(`    calibrated=${String(p.calibrated)} rank=${JSON.stringify(p.rank)} entry_rank=${JSON.stringify(p.entry_rank)}`);
-  console.log(`    sessions=${Array.isArray(body.sessions) ? body.sessions.length : '?'} modules=${Array.isArray(body.modules) ? body.modules.length : '?'}`);
+
+  // Field names here are current_rank and pcp, not rank/calibrated/entry_rank.
+  // calibrated is a client-side derivation from the absence of a PCP, which is
+  // why it is not reported here.
+  console.log(
+    `    pcp=${p.pcp ? 'PRESENT' : 'absent'}  current_rank=${JSON.stringify(p.current_rank)}` +
+      `  sessions=${Array.isArray(body.sessions) ? body.sessions.length : '?'}` +
+      `  modules=${Array.isArray(body.modules) ? body.modules.length : '?'}`,
+  );
+
+  // A fresh account must be genuinely empty. An empty sessions list alone does
+  // not prove that: rank_history, daily_log and the streak all feed the first
+  // real APE and Glicko numbers, so a residue there would quietly corrupt them.
+  const empty: [string, number][] = [
+    ['rank_history', p.rank_history?.length ?? -1],
+    ['daily_log', p.daily_log?.length ?? -1],
+    ['sessions', body.sessions?.length ?? -1],
+    ['active_structural_locks', p.active_structural_locks?.length ?? -1],
+  ];
+  for (const [name, n] of empty) {
+    if (n !== 0) console.log(`  NOTE ${name} has ${n} entries — not a clean first-run account`);
+  }
+  if (p.streak && (p.streak.current || p.streak.best)) {
+    console.log(`  NOTE streak is ${p.streak.current}/${p.streak.best}, expected 0/0 on a clean account`);
+  }
+  if (p.pcp) console.log(`  NOTE a PCP is present — this account is calibrated, so the 423s below are surprising`);
 
   // Section 16.1: naming a module is now refused outright, and that refusal
   // happens before the PCP gate, so these return 400 rather than 423. Both
