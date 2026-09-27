@@ -115,6 +115,34 @@ export async function getPcp(candidateId: CandidateId): Promise<Pcp | null> {
   };
 }
 
+/**
+ * The recorded passes, newest attempt per vector and pass type.
+ *
+ * This is the input `finaliseCalibration` derives the PCP from. The table is
+ * the only place a pass is validated: recordPass refuses a malformed payload at
+ * write time, so reading it back is what makes those guards load-bearing. If a
+ * pass is redone the later attempt supersedes the earlier one rather than being
+ * averaged with it.
+ */
+export async function readCalibrationPasses(candidateId: CandidateId): Promise<Row[]> {
+  const rows = plainAll<Row>(
+    await getDb()
+      .prepare(
+        `SELECT vector, pass_type, accuracy_pct, mean_latency_ms, threshold_ms, wpm, details
+           FROM (
+             SELECT *, ROW_NUMBER() OVER (
+               PARTITION BY candidate_id, vector, pass_type ORDER BY id DESC
+             ) AS rn
+               FROM calibration_passes
+               WHERE candidate_id = ?
+           )
+           WHERE rn = 1`,
+      )
+      .all(candidateId),
+  );
+  return rows;
+}
+
 export async function insertCalibrationPass(args: {
   candidateId: CandidateId;
   vector: string;

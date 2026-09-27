@@ -23,6 +23,13 @@ export interface RawPass {
   correct: number;
   total: number;
   mean_latency_ms: number;
+  /**
+   * The stored accuracy column. Not read by the derivations, which work from
+   * `correct`/`total`, but retained so the two can be cross-checked: a row whose
+   * accuracy column disagrees with its own item counts is corrupt and must not
+   * seed a ceiling.
+   */
+  accuracy_pct?: number;
   /** C3 only. */
   wpm?: number;
   /** C1 only: accuracy keyed by band. */

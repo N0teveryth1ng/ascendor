@@ -299,8 +299,18 @@ async function handleRecordPass(req: Request, res: Response): Promise<void> {
 async function handleFinalise(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
   await loadCandidate(id);
-  const passes = Array.isArray(req.body?.passes) ? req.body.passes : [];
-  const pcp = await finaliseCalibration(id, passes, { recalibrate: req.body?.recalibrate === true });
+  // The PCP is derived from the candidate's recorded passes. A body carrying its
+  // own numbers is rejected rather than ignored, so a client cannot believe it
+  // supplied the data when the server actually ignored it.
+  if (Array.isArray(req.body?.passes)) {
+    res.status(400).json({
+      error:
+        'Passes are not accepted here. The PCP is derived from the passes recorded for this candidate, ' +
+        'each validated when it was recorded. Submit the vector results through the calibration probe first.',
+    });
+    return;
+  }
+  const pcp = await finaliseCalibration(id, { recalibrate: req.body?.recalibrate === true });
   res.json({ pcp, profile: await buildCandidateProfile(id) });
 }
 

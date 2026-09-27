@@ -13,6 +13,7 @@ import {
   getPcp,
   initialiseWindows,
   insertCalibrationPass,
+  readCalibrationPasses,
   savePcp,
 } from '../db/repo.js';
 import { computeC1, computeC5 } from '../core/calibration.js';
@@ -166,11 +167,29 @@ export async function recordPass(
   if (vector === 'C1') assertC1BandAccuracy(data.band_accuracy);
   if (vector === 'C2') assertC2LevelAccuracy(data.level_accuracy);
   if (vector === 'C3') assertC3Wpm(data.wpm);
+
+  const total = Number(data.total ?? 0);
+  const correct = Number(data.correct ?? 0);
+  if (!Number.isInteger(total) || total <= 0) {
+    throw new HttpError(400, `A calibration pass must report a positive item count, got ${total}.`);
+  }
+  if (!Number.isInteger(correct) || correct < 0 || correct > total) {
+    throw new HttpError(400, `A calibration pass reporting ${correct} correct out of ${total} items is not a possible result.`);
+  }
+  // The accuracy column and the item counts are written together, so a payload
+  // whose two halves disagree is corrupt rather than merely imprecise.
+  const accuracyPct = Math.round((correct / total) * 10000) / 100;
+  if (data.accuracy_pct !== undefined && Math.abs(accuracyPct - data.accuracy_pct) > 0.01) {
+    throw new HttpError(
+      400,
+      `Reported accuracy ${data.accuracy_pct}% does not match ${correct}/${total} items.`,
+    );
+  }
   await insertCalibrationPass({
     candidateId,
     vector,
     passType,
-    accuracyPct: data.total ? (data.correct / data.total) * 100 : 0,
+    accuracyPct,
     meanLatencyMs: data.mean_latency_ms,
     thresholdMs: Math.round(data.mean_latency_ms * 1.15),
     wpm: data.wpm ?? null,
@@ -200,9 +219,41 @@ export interface FinaliseOptions {
   recalibrate?: boolean;
 }
 
+/**
+ * A stored pass carries its accuracy twice: as the `accuracy_pct` column and as
+ * the `correct`/`total` item counts inside `details`. Both are written in the
+ * same insert, so they cannot legitimately disagree. A mismatch means the row
+ * is corrupt, and deriving the ladder from it would seed a ceiling that no
+ * observed performance supports — so refuse instead of guessing which half is
+ * right.
+ */
+export function assertPassIntegrity(passes: RawPass[]): void {
+  for (const p of passes) {
+    if (!Number.isInteger(p.correct) || !Number.isInteger(p.total) || p.total <= 0) {
+      throw new HttpError(400, `${p.vector}/${p.pass_type} has invalid item counts (${p.correct}/${p.total}).`);
+    }
+    if (p.correct < 0 || p.correct > p.total) {
+      throw new HttpError(400, `${p.vector}/${p.pass_type} claims ${p.correct} correct out of ${p.total}.`);
+    }
+    if (!Number.isFinite(p.mean_latency_ms) || p.mean_latency_ms < 0) {
+      throw new HttpError(400, `${p.vector}/${p.pass_type} has an invalid mean latency of ${p.mean_latency_ms}ms.`);
+    }
+    const derived = Math.round((p.correct / p.total) * 10000) / 100;
+    if (typeof p.accuracy_pct !== 'number' || !Number.isFinite(p.accuracy_pct)) {
+      throw new HttpError(400, `${p.vector}/${p.pass_type} is missing its stored accuracy.`);
+    }
+    if (Math.abs(derived - p.accuracy_pct) > 0.01) {
+      throw new HttpError(
+        400,
+        `${p.vector}/${p.pass_type} is internally inconsistent: stored accuracy ${p.accuracy_pct}% ` +
+          `but its item counts derive ${derived}%. Refusing to seed a ceiling from a corrupt row.`,
+      );
+    }
+  }
+}
+
 export async function finaliseCalibration(
   candidateId: CandidateId,
-  passes: RawPass[],
   opts: FinaliseOptions = {},
 ): Promise<Pcp> {
   const existing = await getPcp(candidateId);
@@ -213,9 +264,37 @@ export async function finaliseCalibration(
       409,
     );
   }
-  if (passes.length === 0) {
-    throw new GateError('CALIBRATION INCOMPLETE — no vector results supplied.', 400);
+
+  // The PCP is derived from the recorded passes, never from a request body. The
+  // per-vector guards run at write time against these rows, so a client cannot
+  // bypass them by supplying its own numbers to finalise.
+  const stored = await readCalibrationPasses(candidateId);
+  if (stored.length === 0) {
+    throw new GateError('CALIBRATION INCOMPLETE — no recorded passes for this candidate.', 400);
   }
+  const passes = stored.map((row) => {
+    let details: Record<string, unknown>;
+    try {
+      details = typeof row.details === 'string' ? JSON.parse(row.details) : (row.details as never);
+    } catch {
+      throw new HttpError(400, `${row.vector}/${row.pass_type} has unreadable details and cannot be used.`);
+    }
+    return {
+      vector: row.vector as CalibrationVectorId,
+      pass_type: row.pass_type,
+      correct: Number(details.correct),
+      total: Number(details.total),
+      mean_latency_ms: row.mean_latency_ms,
+      wpm: row.wpm === null || row.wpm === undefined ? undefined : Number(row.wpm),
+      band_accuracy: details.band_accuracy as RawPass['band_accuracy'],
+      level_accuracy: details.level_accuracy as RawPass['level_accuracy'],
+      clarity_by_class: details.clarity_by_class as RawPass['clarity_by_class'],
+      clarity: details.clarity === undefined ? undefined : Number(details.clarity),
+      accuracy_pct: row.accuracy_pct,
+    } as RawPass & { accuracy_pct: number };
+  });
+  assertPassIntegrity(passes);
+
   const required: CalibrationVectorId[] = ['C1', 'C2', 'C3', 'C4', 'C5'];
   const seen = new Set(passes.map((p) => p.vector));
   for (const v of required) {

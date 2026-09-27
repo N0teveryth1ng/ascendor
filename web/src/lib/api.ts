@@ -92,8 +92,8 @@ export const api = {
   calibrationProbe: (vector: 'C1' | 'C2' | 'C3' | 'C4' | 'C5', passType: 'untimed' | 'timed' = 'untimed') =>
     request<{ plan: SessionPlan }>(`/calibration/probe?vector=${vector}&pass_type=${passType}`),
   recordPass: (pass: unknown) => post<unknown>('/calibration/passes', pass),
-  finalise: (passes: unknown[], recalibrate = false) =>
-    post<{ pcp: unknown; profile: CandidateProfile }>('/calibration/finalise', { passes, recalibrate }),
+  finalise: (recalibrate = false) =>
+    post<{ pcp: unknown; profile: CandidateProfile }>('/calibration/finalise', { recalibrate }),
 
   /* drills */
   profile: () =>

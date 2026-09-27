@@ -58,7 +58,7 @@ function section(name: string): void {
  */
 const CANDIDATE = 'smoke-billi';
 /** Every candidate id this suite creates, so the reset can clear exactly them. */
-const FIXTURES = [CANDIDATE, 'smoke-anik', 'smoke-streak-probe'] as const;
+const FIXTURES = [CANDIDATE, 'smoke-anik', 'smoke-streak-probe', 'smoke-no-timed'] as const;
 
 // Schema first, then a clean slate, then the demo tracks the suite drives.
 // resetSmokeFixtures only deletes rows for the ids above, so this is safe to run
@@ -81,9 +81,18 @@ await createCandidate(CANDIDATE, 'Billi');
 
   let rejected = false;
   try {
-    await finaliseCalibration(CANDIDATE, [
-      { vector: 'C1', pass_type: 'untimed', correct: 5, total: 5, mean_latency_ms: 900 },
-    ]);
+    /* Only C1's untimed pass exists: the recorded set is the whole input, so a
+       partial calibration is incomplete no matter what a caller sends. */
+    await recordPass(CANDIDATE, 'C1', 'untimed', {
+      correct: 1,
+      total: 12,
+      mean_latency_ms: 1500,
+      band_accuracy: {
+        V1: 100, V2: 0, V3: 0, V4: 0, V5: 0, V6: 0,
+        V7: 0, V8: 0, V9: 0, V10: 0, V11: 0, V12: 0,
+      },
+    });
+    await finaliseCalibration(CANDIDATE);
   } catch (e) {
     rejected = (e as Error).message.includes('CALIBRATION INCOMPLETE');
   }
@@ -94,47 +103,47 @@ await createCandidate(CANDIDATE, 'Billi');
 
 section('2. PERSONALIZED CALIBRATION PROFILE (Section 1.3)');
 
+/* One item per band and per level, so every band/level score is 0 or 100.
+   Fractional per-band scores are no longer representable: a band is either the
+   single item the candidate got right or it is not. The server refuses anything
+   else, so the fixtures must not pretend otherwise. */
 const passes: RawPass[] = [
   {
     vector: 'C1' as const,
     pass_type: 'untimed' as const,
-    correct: 88,
-    total: 96,
+    correct: 5,
+    total: 12,
     mean_latency_ms: 1500,
     band_accuracy: {
-      V1: 100, V2: 100, V3: 100, V4: 95, V5: 90, V6: 85,
-      V7: 0, V8: 0, V9: 0, V10: 0, V11: 0, V12: 0,
+      V1: 100, V2: 100, V3: 100, V4: 100, V5: 100, V6: 0, V7: 0, V8: 0, V9: 0, V10: 0, V11: 0, V12: 0,
     },
   },
   {
     vector: 'C1' as const,
     pass_type: 'timed' as const,
-    correct: 70,
-    total: 96,
+    correct: 4,
+    total: 12,
     mean_latency_ms: 2600,
-    band_accuracy: { V1: 95, V2: 90, V3: 85, V4: 80, V5: 70, V6: 60, V7: 0, V8: 0, V9: 0, V10: 0, V11: 0, V12: 0 },
+    band_accuracy: { V1: 100, V2: 100, V3: 100, V4: 100, V5: 0, V6: 0, V7: 0, V8: 0, V9: 0, V10: 0, V11: 0, V12: 0 },
   },
   {
     vector: 'C2' as const,
     pass_type: 'untimed' as const,
-    correct: 38,
-    total: 48,
+    correct: 4,
+    total: 8,
     mean_latency_ms: 4200,
-    level_accuracy: { S1: 100, S2: 100, S3: 100, S4: 100, S5: 83, S6: 50, S7: 0, S8: 0 },
+    level_accuracy: { S1: 100, S2: 100, S3: 100, S4: 100, S5: 0, S6: 0, S7: 0, S8: 0 },
   },
   {
     vector: 'C2' as const,
     pass_type: 'timed' as const,
-    correct: 30,
-    total: 48,
+    correct: 3,
+    total: 8,
     mean_latency_ms: 5800,
-    level_accuracy: { S1: 100, S2: 100, S3: 92, S4: 92, S5: 67, S6: 33, S7: 0, S8: 0 },
+    level_accuracy: { S1: 100, S2: 100, S3: 100, S4: 0, S5: 0, S6: 0, S7: 0, S8: 0 },
   },
-  { vector: 'C3' as const, pass_type: 'untimed' as const, correct: 12, total: 12, mean_latency_ms: 800, wpm: 90 },
-  { vector: 'C3' as const, pass_type: 'untimed' as const, correct: 12, total: 12, mean_latency_ms: 900, wpm: 130 },
-  { vector: 'C3' as const, pass_type: 'untimed' as const, correct: 11, total: 12, mean_latency_ms: 1100, wpm: 150 },
-  { vector: 'C3' as const, pass_type: 'timed' as const, correct: 10, total: 12, mean_latency_ms: 1600, wpm: 175 },
-  { vector: 'C3' as const, pass_type: 'timed' as const, correct: 8, total: 12, mean_latency_ms: 2200, wpm: 200 },
+  { vector: 'C3' as const, pass_type: 'untimed' as const, correct: 12, total: 12, mean_latency_ms: 900, wpm: 150 },
+  { vector: 'C3' as const, pass_type: 'timed' as const, correct: 10, total: 12, mean_latency_ms: 1800, wpm: 200 },
   {
     vector: 'C4' as const,
     pass_type: 'untimed' as const,
@@ -157,7 +166,16 @@ const passes: RawPass[] = [
   { vector: 'C5' as const, pass_type: 'timed' as const, correct: 31, total: 36, mean_latency_ms: 2700 },
 ];
 
-const pcp = await finaliseCalibration(CANDIDATE, passes);
+/** Finalisation derives from the recorded passes, so a pass must be recorded. */
+async function recordAll(candidate: string, list: RawPass[]): Promise<void> {
+  for (const p of list) {
+    const { vector, pass_type, ...data } = p;
+    await recordPass(candidate, vector, pass_type, data);
+  }
+}
+
+await recordAll(CANDIDATE, passes);
+const pcp = await finaliseCalibration(CANDIDATE);
 check('vocabulary band derived from untimed C1', pcp.vocabulary_band === 'V5', `got ${pcp.vocabulary_band} (V5 scored 90%, V6 scored 85%)`);
 check('syntax ceiling derived from untimed C2', pcp.syntax_ceiling === 'S4', `got ${pcp.syntax_ceiling}`);
 check('baseline reflex latency from timed C5', pcp.baseline_reflex_latency_ms === 2700, `got ${pcp.baseline_reflex_latency_ms}`);
@@ -581,22 +599,24 @@ section('13. CANDIDATE INDEPENDENCE (Section 1.3)');
   await createCandidate(other, 'Anik');
   const strongPasses = JSON.parse(JSON.stringify(passes)) as typeof passes;
   strongPasses[0]!.band_accuracy = { V1: 100, V2: 100, V3: 100, V4: 100, V5: 100, V6: 100, V7: 100, V8: 100, V9: 100, V10: 100, V11: 100, V12: 100 };
-  strongPasses[0]!.correct = 96;
-  strongPasses[1]!.correct = 90;
+  strongPasses[0]!.correct = 12;
+  strongPasses[1]!.correct = 10;
   strongPasses[2]!.level_accuracy = { S1: 100, S2: 100, S3: 100, S4: 100, S5: 100, S6: 100, S7: 100, S8: 100 };
-  strongPasses[2]!.correct = 48;
-  strongPasses[3]!.correct = 46;
+  strongPasses[2]!.correct = 8;
+  strongPasses[3]!.correct = 7;
   strongPasses[3]!.level_accuracy = { S1: 100, S2: 100, S3: 100, S4: 100, S5: 100, S6: 100, S7: 100, S8: 100 };
-  strongPasses[4]!.wpm = 90; strongPasses[5]!.wpm = 150; strongPasses[6]!.wpm = 200; strongPasses[7]!.wpm = 250; strongPasses[8]!.wpm = 310;
-  strongPasses[8]!.correct = 12;
-  strongPasses[9]!.clarity_by_class = { str_cluster: 90, th_digraph: 92, voiceless_stops: 94, voiced_stops: 91, laterals: 93 };
-  strongPasses[10]!.clarity_by_class = { str_cluster: 89, th_digraph: 91, voiceless_stops: 93, voiced_stops: 90, laterals: 92 };
-  strongPasses[9]!.clarity = 92;
-  strongPasses[10]!.clarity = 92;
-  strongPasses[11]!.correct = 36;
-  strongPasses[12]!.correct = 35;
+  strongPasses[4]!.wpm = 250;
+  strongPasses[5]!.wpm = 310;
+  strongPasses[5]!.correct = 12;
+  strongPasses[6]!.clarity_by_class = { str_cluster: 90, th_digraph: 92, voiceless_stops: 94, voiced_stops: 91, laterals: 93 };
+  strongPasses[7]!.clarity_by_class = { str_cluster: 89, th_digraph: 91, voiceless_stops: 93, voiced_stops: 90, laterals: 92 };
+  strongPasses[6]!.clarity = 92;
+  strongPasses[7]!.clarity = 92;
+  strongPasses[8]!.correct = 36;
+  strongPasses[9]!.correct = 35;
 
-  const anik = await finaliseCalibration(other, strongPasses);
+  await recordAll(other, strongPasses);
+  const anik = await finaliseCalibration(other);
   check('second candidate gets a different vocabulary band', anik.vocabulary_band !== pcp.vocabulary_band, `billi=${pcp.vocabulary_band} anik=${anik.vocabulary_band}`);
   check('second candidate gets a different syntax ceiling', anik.syntax_ceiling !== pcp.syntax_ceiling, `billi=${pcp.syntax_ceiling} anik=${anik.syntax_ceiling}`);
   check('stronger PCP yields a higher entry rank', anik.entry_rank === 'RANK 02: OPERATOR', `anik=${anik.entry_rank}`);
@@ -756,10 +776,13 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
 }
 
 {
-  /* Section 1.2 mandates a timed pass on EVERY vector. */
+  /* Section 1.2 mandates a timed pass on EVERY vector. Recording the timed
+     results as untimed leaves every vector with an untimed pass only. */
+  await createCandidate('smoke-no-timed', 'No Timed');
+  await recordAll('smoke-no-timed', passes.map((p) => (p.pass_type === 'timed' ? { ...p, pass_type: 'untimed' as const } : p)));
   let timedError: string | null = null;
   try {
-    await finaliseCalibration('no-timed', passes.map((p) => (p.pass_type === 'timed' ? { ...p, pass_type: 'untimed' as const } : p)));
+    await finaliseCalibration('smoke-no-timed');
   } catch (e) {
     timedError = (e as Error).message;
   }
@@ -768,7 +791,7 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
   /* A calibrated PCP is locked; a silent overwrite would reset the track. */
   let lockError: string | null = null;
   try {
-    await finaliseCalibration(CANDIDATE, passes);
+    await finaliseCalibration(CANDIDATE);
   } catch (e) {
     lockError = (e as Error).message;
   }
@@ -780,12 +803,8 @@ section('15. REGRESSION GUARDS (defects fixed during build)');
      inflate it, and they must not be undone by a later session either. */
   const DAY_CAND = 'smoke-streak-probe';
   await createCandidate(DAY_CAND, 'STREAK PROBE');
-  await recordPass(DAY_CAND, 'C1', 'untimed', passes[0]!);
-  await recordPass(DAY_CAND, 'C2', 'untimed', passes[2]!);
-  await recordPass(DAY_CAND, 'C3', 'untimed', passes[4]!);
-  await recordPass(DAY_CAND, 'C4', 'untimed', passes[9]!);
-  await recordPass(DAY_CAND, 'C5', 'untimed', passes[11]!);
-  await finaliseCalibration(DAY_CAND, passes);
+  await recordAll(DAY_CAND, passes);
+  await finaliseCalibration(DAY_CAND);
 
   const perfect = (n: number) =>
     Array.from({ length: n }, (_, k) => ({

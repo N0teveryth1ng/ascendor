@@ -20,6 +20,7 @@ import { STREAMS, streamsForBand } from '../src/content/comprehension.js';
 import { BAND_ORDER } from '../src/content/vocab.js';
 import { computeC3 } from '../src/core/calibration.js';
 import { MAX_STREAM_WPM, MIN_STREAM_WPM } from '../src/content/index.js';
+import { assertPassIntegrity } from '../src/service/calibrationService.js';
 import type { RawPass } from '../src/core/calibration.js';
 
 function pass(wpm: number, correct: number, total = 12): RawPass {
@@ -93,4 +94,22 @@ test('band gating does not starve the stream pool', () => {
   for (const band of BAND_ORDER) {
     assert.ok(streamsForBand(band, BAND_ORDER).length > 0, `no stream content available at ${band}`);
   }
+});
+
+test('a pass whose accuracy contradicts its own item counts is refused', () => {
+  // This is the check that makes the write guards load-bearing. Finalisation
+  // reads the recorded rows, so a row claiming 100% accuracy while recording
+  // 3/12 correct would otherwise seed a ceiling nothing supports.
+  const honest = { vector: 'C3' as const, pass_type: 'untimed' as const, correct: 3, total: 12, mean_latency_ms: 900, accuracy_pct: 25 };
+  assert.doesNotThrow(() => assertPassIntegrity([honest]));
+
+  assert.throws(
+    () => assertPassIntegrity([{ ...honest, accuracy_pct: 100 }]),
+    /internally inconsistent/,
+    'an accuracy column that disagrees with correct/total must be refused',
+  );
+  assert.throws(() => assertPassIntegrity([{ ...honest, correct: 30 }]), /claims 30 correct/);
+  assert.throws(() => assertPassIntegrity([{ ...honest, total: 0 }]), /invalid item counts/);
+  assert.throws(() => assertPassIntegrity([{ ...honest, accuracy_pct: undefined }]), /missing its stored accuracy/);
+  assert.throws(() => assertPassIntegrity([{ ...honest, mean_latency_ms: -1 }]), /invalid mean latency/);
 });

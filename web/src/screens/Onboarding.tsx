@@ -159,7 +159,9 @@ export function Onboarding() {
           nextLog.some((p) => p.vector === v && p.pass_type === 'timed'),
       );
       if (complete) {
-        await api.finalise(nextLog);
+        // The passes are already recorded server-side, each validated on write.
+        // Finalise derives the PCP from those recorded rows.
+        await api.finalise();
         go('home');
         return;
       }
