@@ -95,19 +95,26 @@ async function main(): Promise<void> {
   }
 
   // Submit must not accept a caller-named module either.
+  //
+  // The probe sends an empty attempts[] on purpose: that guarantees a 400 before
+  // the engine is ever reached, so running this against production cannot
+  // create a session row. The cost is that a bare "status >= 400" assertion
+  // would pass on the empty-attempts error and prove nothing, so the refusal is
+  // matched against the module-parameter message specifically. The unit test
+  // covers rejectModuleParam itself for all 9 ids.
   for (const moduleId of ALL_MODULE_IDS) {
     const res = await fetch(`${BASE}/api/session`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ module_id: moduleId, attempts: [] }),
     });
-    const text = await res.text();
-    // 400 for an unknown/absent module, 400 for empty attempts, or 423 — none of
-    // which mean the named module was accepted.
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const refused =
+      res.status === 400 && /module/i.test(body.error ?? '') && !/attempts/i.test(body.error ?? '');
     check(
-      `POST /session with module_id=${moduleId} does not select a module`,
-      res.status >= 400,
-      `got ${res.status}: ${text.slice(0, 120)}`,
+      `POST /session with module_id=${moduleId} refused the module`,
+      refused,
+      `got ${res.status}: ${(body.error ?? '').slice(0, 140)}`,
     );
   }
 

@@ -345,6 +345,12 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
   await loadCandidate(id);
   await requirePcp(id);
 
+  // Same rule as the plan route, and for the same reason: a client that posts
+  // results directly must not be able to name the module they are credited to.
+  // Refusing beats ignoring — an ignored module_id would still let a client
+  // believe it chose, while the engine graded something else.
+  rejectModuleParam(req.body?.module_id);
+
   const routine = await buildDailyRoutine(id, todayUtc());
   const stepNo = Number(req.body?.step ?? 1);
   const step = routine.steps.find((s) => s.order === stepNo);

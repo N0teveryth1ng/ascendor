@@ -163,8 +163,8 @@ export function rejectModuleParam(value: unknown): void {
   if (value === undefined) return;
   throw new HttpError(
     400,
-    'MODULE SELECTION REMOVED — this endpoint serves the one daily routine. ' +
-      'The ?module= parameter is no longer accepted (Section 16.1).',
+    'MODULE SELECTION REMOVED - this endpoint serves the one daily routine. ' +
+      'Naming a module is no longer accepted here, as a query parameter or in the body (Section 16.1).',
   );
 }
 
