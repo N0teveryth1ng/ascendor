@@ -18,7 +18,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSession } from '../src/content/index.js';
 import { emptyWindow } from '../src/db/repo.js';
-import { CALIBRATION_PRESSURE, probePcp, windowForPass } from '../src/service/sessionPlan.js';
+import { CALIBRATION_PRESSURE, calibrationProbeWindow } from '../src/core/calibration.js';
+import { probePcp, windowForPass } from '../src/service/sessionPlan.js';
 import type { ModuleId } from '../src/core/types.js';
 
 /** The module each vector is served from, mirroring the probe route. */
@@ -55,6 +56,24 @@ test('a probe takes its window from the probe profile, not the empty-window defa
   const timed = windowForPass(emptyWindow(), probePcp('c', 'timed'), false);
   assert.equal(timed.current_threshold_ms, 1440);
   assert.equal(timed.current_threshold_ms, probePcp('c', 'timed').phase_1_entry_difficulty_seed.latency_threshold_ms);
+});
+
+test('the route, the plan builder and the pass recorder all read one window', () => {
+  // These were three independent notions of the same number. The recorder stored
+  // `latency * 1.15`, which matched neither, so the audit log described a window
+  // the candidate was never given.
+  assert.equal(calibrationProbeWindow('untimed'), 2400);
+  assert.equal(calibrationProbeWindow('timed'), 1440);
+  for (const passType of ['untimed', 'timed'] as const) {
+    assert.equal(
+      probePcp('c', passType).phase_1_entry_difficulty_seed.latency_threshold_ms,
+      calibrationProbeWindow(passType),
+    );
+    const plan = planFor(VECTOR_MODULE.C5!, passType);
+    for (const item of plan.items) {
+      assert.equal(item.threshold_ms, calibrationProbeWindow(passType), `C5 item window should be the shared constant`);
+    }
+  }
 });
 
 test('a real training session still uses its own adaptive window', () => {

@@ -17,6 +17,40 @@ import { clamp, nowIso, round2 } from '../util.js';
  * The untimed pass measures capability. The timed pass measures how much
  * speed degrades that capability — which is what the APE actually needs.
  */
+export type CalibrationPassType = 'untimed' | 'timed';
+
+/**
+ * How much pressure each calibration pass applies.
+ *
+ * `untimed` establishes the comfort ceiling: ordinary delivery rate, ordinary
+ * response window. `timed` re-presents the same content faster and tighter so
+ * the engine can locate the point where performance degrades. These are fixed
+ * probe constants, never candidate-derived, because a candidate has no PCP yet.
+ */
+export const CALIBRATION_PRESSURE: Record<CalibrationPassType, { wpm_ceiling: number; threshold_factor: number }> = {
+  untimed: { wpm_ceiling: 200, threshold_factor: 1 },
+  timed: { wpm_ceiling: 320, threshold_factor: 0.6 },
+};
+
+/** The response window an untimed calibration pass is served with. */
+const NEUTRAL_PROBE_THRESHOLD_MS = 2400;
+
+/**
+ * The window a calibration pass of this type is actually served with.
+ *
+ * The single source of truth for calibration pressure. It previously lived in
+ * two places — the route's own table for the synthetic C1/C2 plans, and the
+ * probe profile for the module-backed ones — and a third implicit one when
+ * recording a pass. The route's copies stayed correct while the module-backed
+ * plans silently ignored theirs, so a timed C5 pass was served the same window
+ * as an untimed one. It lives in core rather than a service so that the route,
+ * the plan builder, and the pass recorder can all reach it without importing
+ * each other.
+ */
+export function calibrationProbeWindow(passType: CalibrationPassType): number {
+  return Math.round(NEUTRAL_PROBE_THRESHOLD_MS * CALIBRATION_PRESSURE[passType].threshold_factor);
+}
+
 export interface RawPass {
   vector: CalibrationVectorId;
   pass_type: 'untimed' | 'timed';

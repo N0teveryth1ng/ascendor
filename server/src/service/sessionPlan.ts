@@ -12,6 +12,7 @@ import {
   sessionSummaries,
 } from '../db/repo.js';
 import type { CandidateId, ModuleId, Pcp, RollingWindow, VocabularyBand } from '../core/types.js';
+import { CALIBRATION_PRESSURE, calibrationProbeWindow } from '../core/calibration.js';
 import { emptyWindow } from '../db/repo.js';
 
 /**
@@ -45,19 +46,6 @@ export interface PlanResult {
   recall_payload: { kind: 'scene'; scene_id: string; slots: { slot: number; expected: string }[] }[];
 }
 
-/**
- * How much pressure each calibration pass applies.
- *
- * `untimed` establishes the comfort ceiling: ordinary delivery rate, ordinary
- * response window. `timed` re-presents the same content faster and tighter so
- * the engine can locate the point where performance degrades. These are fixed
- * probe constants, never candidate-derived, because a candidate has no PCP yet.
- */
-export const CALIBRATION_PRESSURE: Record<PassType, { wpm_ceiling: number; threshold_factor: number }> = {
-  untimed: { wpm_ceiling: 200, threshold_factor: 1 },
-  timed: { wpm_ceiling: 320, threshold_factor: 0.6 },
-};
-
 export type PassType = 'untimed' | 'timed';
 
 /**
@@ -81,7 +69,7 @@ export function probePcp(candidateId: CandidateId, passType: PassType = 'untimed
     flagged_weak_vectors: [],
     entry_rank: 'RANK 03: DECODER',
     phase_1_entry_difficulty_seed: {
-      latency_threshold_ms: Math.round(2400 * pressure.threshold_factor),
+      latency_threshold_ms: calibrationProbeWindow(passType),
       wpm_ceiling: pressure.wpm_ceiling,
       flash_duration_ms: 120,
       phase1_sublevel: { P1_VD: 1, P1_VSF: 1, P1_VM: 1 },

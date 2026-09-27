@@ -1,10 +1,11 @@
 import type { CalibrationVectorId, CandidateId, Pcp, SyntaxCeiling, VocabularyBand } from '../core/types.js';
-import { buildPcp, type RawPass } from '../core/calibration.js';
+import { buildPcp, calibrationProbeWindow, type RawPass } from '../core/calibration.js';
 import { BAND_ORDER } from '../content/vocab.js';
 import { SYNTAX_LEVELS } from '../content/syntax.js';
 import { C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
 import { C2_ITEMS_PER_LEVEL } from '../content/calibrationC2.js';
 import { MAX_STREAM_WPM, MIN_STREAM_WPM } from '../content/index.js';
+
 import { HttpError } from './httpError.js';
 import {
   bootstrapCandidate,
@@ -199,7 +200,12 @@ export async function recordPass(
     passType,
     accuracyPct,
     meanLatencyMs: data.mean_latency_ms,
-    thresholdMs: Math.round(data.mean_latency_ms * 1.15),
+    // The response window the candidate was actually served with. This used to
+    // be `mean_latency_ms * 1.15`, which is not a window at all: an untimed C1
+    // pass recorded 1400ms latency and stored 1610, while the candidate had
+    // been given 2400. The audit log therefore disagreed with every pass it
+    // described.
+    thresholdMs: calibrationProbeWindow(passType),
     wpm: data.wpm ?? null,
     details: {
       band_accuracy: data.band_accuracy ?? null,

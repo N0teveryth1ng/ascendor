@@ -12,6 +12,7 @@ import {
 } from '../service/calibrationService.js';
 import { buildSession, type DelayedScenePayload, type SessionPlan } from '../content/index.js';
 import { planFor } from '../service/sessionPlan.js';
+import { calibrationProbeWindow } from '../core/calibration.js';
 import {
   activeLocks,
   allWindows,
@@ -142,12 +143,12 @@ const CALIBRATION_PROBE_MODULE: Record<string, ModuleId> = {
  * Response window for a calibration pass. Mirrors the probe profile's pressure
  * so the synthetic C1/C2 plans and the module-backed C3-C5 plans tighten by the
  * same amount on the timed pass. Not a real APE threshold: these values are
- * fixed probe constants because a candidate has no PCP yet.
+ * fixed probe constants because a candidate has no PCP yet. The numbers live in
+ * sessionPlan so the route and the module-backed plans cannot drift apart.
  */
-const CALIBRATION_PRESSURE: Record<'untimed' | 'timed', { thresholdMs: number }> = {
-  untimed: { thresholdMs: 2400 },
-  timed: { thresholdMs: 1440 },
-};
+function probeThresholdMs(passType: 'untimed' | 'timed'): number {
+  return calibrationProbeWindow(passType);
+}
 
 /**
  * A synthetic plan for the vectors served from their own banks. C1 and C2 have
@@ -197,7 +198,7 @@ async function handleCalibrationProbe(req: Request, res: Response): Promise<void
     throw new HttpError(400, 'vector must be C1|C2|C3|C4|C5');
   }
   const passType = req.query.pass_type === 'timed' ? 'timed' : 'untimed';
-  const thresholdMs = Math.round(CALIBRATION_PRESSURE[passType].thresholdMs);
+  const thresholdMs = probeThresholdMs(passType);
 
   // C1 and C2 are served from their own authored banks rather than from a drill
   // module, because no module measures either one: the syntax bank had no item
