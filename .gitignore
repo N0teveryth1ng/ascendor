@@ -3,6 +3,13 @@ dist/
 *.log
 .env
 .env.local
+# `vercel env pull` writes .env.production.local, which held the live Neon
+# DATABASE_URL. Only .env and .env.local were ignored, so that file was one
+# `git add -A` away from committing a production credential.
+.env.*.local
+.env.production.local
+.env.development.local
+.env.preview.local
 .DS_Store
 # Legacy local SQLite databases. The engine is on Postgres now; these are
 # untracked leftovers kept on disk only as a migration source.
