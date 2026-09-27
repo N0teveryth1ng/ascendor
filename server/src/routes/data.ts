@@ -4,7 +4,7 @@ import { buildDashboard } from '../service/dashboard.js';
 import { historyFor, historyTotals } from '../service/history.js';
 import { statsFor } from '../service/stats.js';
 import { listCandidatesForTeacher, teacherDetail } from '../service/teacher.js';
-import { getPcp, listSessions } from '../db/repo.js';
+import { getPcp, listSessions, readCalibrationPasses } from '../db/repo.js';
 import { buildDailySchedule } from '../core/scheduler.js';
 import { CALIBRATION_MANIFEST, CALIBRATION_STEP_COPY } from '../core/calibrationCopy.js';
 import { plainModule } from '../core/plain.js';
@@ -39,10 +39,18 @@ dataRoutes.get(
   asyncRoute(async (req, res) => {
     const id = req.user!.id;
     const pcp = await getPcp(id);
+    // Which passes already exist, so a candidate who refreshes mid-calibration
+    // resumes instead of restarting. Without this the wizard began at C1 every
+    // time, and a refresh after two vectors silently re-recorded them, so a
+    // partial re-run superseded the passes already on file. Only the pair is
+    // exposed: no scores, no bands, no levels, nothing for the candidate to read
+    // as a result.
+    const recorded = await readCalibrationPasses(id);
     res.json({
       calibrated: pcp?.locked === true,
       steps: CALIBRATION_STEP_COPY,
       manifest_version: CALIBRATION_MANIFEST.version,
+      recorded_passes: recorded.map((r) => ({ vector: r.vector, pass_type: r.pass_type })),
     });
   }),
 );

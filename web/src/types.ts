@@ -472,6 +472,8 @@ export interface Onboarding {
   calibrated: boolean;
   steps: OnboardingStep[];
   manifest_version: string;
+  /** Pairs already on file, so a refresh resumes instead of restarting. */
+  recorded_passes?: { vector: string; pass_type: string }[];
 }
 
 export interface PracticeModule {

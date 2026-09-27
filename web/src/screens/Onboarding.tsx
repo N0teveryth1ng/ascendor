@@ -9,6 +9,11 @@ import { Progress } from '@/components/ui/progress';
 import { gradeAnswer, toAttempt } from '../lib/grading';
 import { openMic, recordFor, speak, type MicCapture } from '../lib/audio';
 import { itemView } from '../lib/itemView';
+import {
+  VECTORS as CALIBRATION_VECTORS,
+  calibrationProgress,
+  nextCalibrationStep,
+} from '../lib/calibrationResume';
 import type { Attempt, CalibrationPass, DrillItem, Onboarding } from '@/types';
 
 /**
@@ -27,7 +32,7 @@ import type { Attempt, CalibrationPass, DrillItem, Onboarding } from '@/types';
  * pattern ids rather than vocabulary bands, so every candidate's C1 collapsed
  * to a hardcoded V1 at 0% accuracy.
  */
-const VECTORS = ['C1', 'C2', 'C3', 'C4', 'C5'] as const;
+const VECTORS = CALIBRATION_VECTORS;
 type Vector = (typeof VECTORS)[number];
 type PassType = 'untimed' | 'timed';
 
@@ -62,7 +67,14 @@ export function Onboarding() {
   useEffect(() => {
     api
       .onboarding()
-      .then(setGuide)
+      .then((g) => {
+        setGuide(g);
+        // Resume at the first pair that is not on file yet, rather than starting
+        // at C1 on every load.
+        const next = nextCalibrationStep(g.recorded_passes);
+        setStepIndex(next.stepIndex);
+        setPassType(next.passType);
+      })
       .catch((e: Error) => setFault(e.message));
   }, [setFault]);
 
@@ -195,7 +207,10 @@ export function Onboarding() {
       setSaving(false);
     }
   }, [user, vector, passType, attempts, items, mic, log, go, setFault]);
-  const overall = useMemo(() => log.length / (VECTORS.length * 2), [log]);
+  // Counted across the passes on file as well as this page load, so resuming
+  // shows real progress rather than starting the bar again at zero.
+  const { done, total } = calibrationProgress(guide?.recorded_passes, log);
+  const overall = total === 0 ? 0 : done / total;
 
   if (!guide) {
     return (
@@ -379,7 +394,7 @@ export function Onboarding() {
         <div className="flex items-center justify-between text-sm">
           <p className="font-medium">Setting up your profile</p>
           <p className="tabular text-muted-foreground">
-            {log.length} of {VECTORS.length * 2}
+            {done} of {total}
           </p>
         </div>
         <Progress value={overall * 100} />
