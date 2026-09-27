@@ -12,6 +12,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "smoke": "tsx scripts/smoke.ts",
     "db:reset": "tsx scripts/resetDb.ts",
+    "db:reset-candidates": "tsx scripts/resetCandidates.ts",
+    "db:purge-fixtures": "tsx scripts/purgeTestFixtures.ts",
     "e2e": "tsx scripts/run-e2e.ts",
     "e2e:serve": "cross-env SEED_DEMO=1 node dist/src/index.js"
   },
