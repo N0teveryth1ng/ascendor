@@ -464,6 +464,29 @@ function buildPass(
     }
     pass.band_accuracy = byBand;
   }
+  if (vector === 'C2') {
+    // The level comes off the served item. There was no C2 branch at all, so
+    // `level_accuracy` was never sent and `deriveSyntaxCeiling([])` returned S1
+    // for every candidate — the floor, regardless of how they actually scored.
+    const correctByLevel: Record<string, number> = {};
+    const totalByLevel: Record<string, number> = {};
+    for (const a of attempts) {
+      const item = items.find((i) => i.item_id === a.item_id);
+      if (!item || item.kind !== 'syntax') {
+        throw new Error(
+          `Calibration C2 received a non-syntax item (${a.item_id}). ` +
+            'A ceiling cannot be derived from this; refusing to record a fabricated level.',
+        );
+      }
+      totalByLevel[item.level] = (totalByLevel[item.level] ?? 0) + 1;
+      if (a.correct) correctByLevel[item.level] = (correctByLevel[item.level] ?? 0) + 1;
+    }
+    const byLevel: Record<string, number> = {};
+    for (const [level, total] of Object.entries(totalByLevel)) {
+      byLevel[level] = Math.round(((correctByLevel[level] ?? 0) / total) * 100);
+    }
+    pass.level_accuracy = byLevel;
+  }
   if (vector === 'C3') {
     const withWpm = items.find((i) => 'wpm' in i);
     pass.wpm = withWpm && 'wpm' in withWpm ? withWpm.wpm : 0;

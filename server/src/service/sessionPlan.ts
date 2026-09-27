@@ -27,6 +27,16 @@ export interface PlanOptions {
    * BEFORE a PCP exists, which is the whole point of calibrating.
    */
   gated: boolean;
+  /**
+   * Calibration only. The battery runs every vector twice, and the timed pass is
+   * supposed to be the same content under pressure. It previously had no effect:
+   * `probePcp` ignored it, so both passes returned byte-identical plans at the
+   * same WPM and the same threshold. That silently voided the two measurements
+   * the engine derives from the contrast — C3's "WPM where accuracy drops below
+   * 90%" had a single speed to measure, and C5's typo vulnerability index was
+   * structurally 0, which reads as maximum orthographic strength.
+   */
+  passType?: PassType;
 }
 
 export interface PlanResult {
@@ -36,11 +46,30 @@ export interface PlanResult {
 }
 
 /**
+ * How much pressure each calibration pass applies.
+ *
+ * `untimed` establishes the comfort ceiling: ordinary delivery rate, ordinary
+ * response window. `timed` re-presents the same content faster and tighter so
+ * the engine can locate the point where performance degrades. These are fixed
+ * probe constants, never candidate-derived, because a candidate has no PCP yet.
+ */
+const CALIBRATION_PRESSURE: Record<PassType, { wpm_ceiling: number; threshold_factor: number }> = {
+  untimed: { wpm_ceiling: 200, threshold_factor: 1 },
+  timed: { wpm_ceiling: 320, threshold_factor: 0.6 },
+};
+
+export type PassType = 'untimed' | 'timed';
+
+/**
  * A neutral, never-persisted profile used only to generate battery items. The
  * real PCP is derived from the recorded passes by derivePcp; nothing scored
  * against a probe ever reaches a metric, threshold, or rank.
+ *
+ * The seed varies with `passType` so the two passes are genuinely different
+ * measurements. Everything else stays neutral.
  */
-function probePcp(candidateId: CandidateId): Pcp {
+function probePcp(candidateId: CandidateId, passType: PassType = 'untimed'): Pcp {
+  const pressure = CALIBRATION_PRESSURE[passType];
   return {
     candidate_id: candidateId,
     calibration_date: '',
@@ -52,8 +81,8 @@ function probePcp(candidateId: CandidateId): Pcp {
     flagged_weak_vectors: [],
     entry_rank: 'RANK 03: DECODER',
     phase_1_entry_difficulty_seed: {
-      latency_threshold_ms: 1200,
-      wpm_ceiling: 200,
+      latency_threshold_ms: Math.round(2400 * pressure.threshold_factor),
+      wpm_ceiling: pressure.wpm_ceiling,
       flash_duration_ms: 120,
       phase1_sublevel: { P1_VD: 1, P1_VSF: 1, P1_VM: 1 },
       speed_multiplier: 1,
@@ -71,7 +100,13 @@ export async function planFor(
   if (!ALL_MODULE_IDS.includes(moduleId)) throw new HttpError(400, 'unknown module');
   const descriptor = MODULES[moduleId];
 
-  const pcp = options.gated ? await requirePcp(candidateId) : ((await getPcp(candidateId)) ?? probePcp(candidateId));
+  // An ungated plan always uses the neutral probe profile, never a stored PCP.
+  // Falling back to the candidate's real PCP made the two calibration passes
+  // identical for anyone recalibrating, and would have measured the new
+  // baseline against the old one it is meant to replace.
+  const pcp = options.gated
+    ? await requirePcp(candidateId)
+    : probePcp(candidateId, options.passType ?? 'untimed');
 
   if (options.gated) {
     const rank = await currentRank(candidateId);

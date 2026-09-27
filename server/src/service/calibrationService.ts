@@ -1,7 +1,9 @@
-import type { CalibrationVectorId, CandidateId, Pcp, VocabularyBand } from '../core/types.js';
+import type { CalibrationVectorId, CandidateId, Pcp, SyntaxCeiling, VocabularyBand } from '../core/types.js';
 import { buildPcp, type RawPass } from '../core/calibration.js';
 import { BAND_ORDER } from '../content/vocab.js';
+import { SYNTAX_LEVELS } from '../content/syntax.js';
 import { C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
+import { C2_ITEMS_PER_LEVEL } from '../content/calibrationC2.js';
 import { HttpError } from './httpError.js';
 import {
   bootstrapCandidate,
@@ -90,6 +92,46 @@ function assertC1BandAccuracy(bandAccuracy: unknown): void {
   }
 }
 
+/**
+ * C2 level scores are meaningful only if the keys are real syntax levels and the
+ * values are the percentages a one-item-per-level pass can actually produce.
+ * `deriveSyntaxCeiling` walks SYNTAX_LEVELS and stops at the first key it does
+ * not recognise, so a malformed map is not an error there — it silently yields
+ * S1, the floor. That is exactly what production did: the client had no C2
+ * branch at all, every candidate's ceiling came back S1, and the value was
+ * stored in the PCP as though it had been measured.
+ */
+function assertC2LevelAccuracy(levelAccuracy: unknown): void {
+  if (levelAccuracy === undefined || levelAccuracy === null) {
+    throw new HttpError(400, 'C2 pass requires level_accuracy');
+  }
+  if (typeof levelAccuracy !== 'object' || Array.isArray(levelAccuracy)) {
+    throw new HttpError(400, 'C2 level_accuracy must be an object keyed by syntax level');
+  }
+  const keys = Object.keys(levelAccuracy as Record<string, unknown>);
+  if (keys.length === 0) throw new HttpError(400, 'C2 level_accuracy is empty');
+  const allowed = new Set(
+    Array.from({ length: C2_ITEMS_PER_LEVEL + 1 }, (_, k) => Math.round((k / C2_ITEMS_PER_LEVEL) * 100)),
+  );
+  for (const key of keys) {
+    if (!SYNTAX_LEVELS.includes(key as SyntaxCeiling)) {
+      throw new HttpError(
+        400,
+        `C2 level_accuracy key ${JSON.stringify(key)} is not a syntax level (expected S1-S8). ` +
+          'Scores must be keyed by the level on the served item, never by a parsed item id.',
+      );
+    }
+    const value = (levelAccuracy as Record<string, unknown>)[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || !allowed.has(value)) {
+      throw new HttpError(
+        400,
+        `C2 level_accuracy[${key}] must be one of [${[...allowed].join(', ')}] because each level ` +
+          `contributes ${C2_ITEMS_PER_LEVEL} item(s) to the pass, but got ${JSON.stringify(value)}.`,
+      );
+    }
+  }
+}
+
 export async function recordPass(
   candidateId: CandidateId,
   vector: string,
@@ -98,6 +140,7 @@ export async function recordPass(
 ): Promise<void> {
   await ensureCandidate(candidateId);
   if (vector === 'C1') assertC1BandAccuracy(data.band_accuracy);
+  if (vector === 'C2') assertC2LevelAccuracy(data.level_accuracy);
   await insertCalibrationPass({
     candidateId,
     vector,

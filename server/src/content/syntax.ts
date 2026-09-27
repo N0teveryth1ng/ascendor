@@ -180,7 +180,10 @@ export const SYNTAX_TASKS: SyntaxTask[] = [
   },
   {
     id: 'S5-05', level: 'S5', construction: 'ACTIVE VOICE',
-    scaffold: 'The pace engine recalculated the threshold after three clean rounds.',
+    // The gap was missing, so this shipped as a finished sentence whose three
+    // options could not be applied to it. It is the active-voice counterpart to
+    // S5-06's passive, and the options were already written for the gap.
+    scaffold: 'The pace engine ___ the threshold after three clean rounds.',
     options: ['was recalculated', 'recalculated', 'had recalculate'], expected: 'recalculated',
     category: 'passive_voice',
   },

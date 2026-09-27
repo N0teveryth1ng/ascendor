@@ -31,6 +31,7 @@ import {
 import { GateError, applyDailyTier, processSessionResult } from '../service/sessionService.js';
 import { buildDailyRoutine, rejectModuleParam, resolveStepModule } from '../service/dailyRoutine.js';
 import { assertVocabularyItems, buildC1Items, C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
+import { assertSyntaxItems, buildC2Items, C2_ITEMS_PER_LEVEL } from '../content/calibrationC2.js';
 import { buildArchiveRows, recordExerciseAttempts } from '../service/exerciseArchive.js';
 import { buildDailySchedule } from '../core/scheduler.js';
 import { evaluateRanks, MASTER_WINDOW_DAYS } from '../core/ranks.js';
@@ -132,14 +133,46 @@ function handleCalibrationBatteryRoute(req: Request, res: Response): void {
  * appear here because it is served from the vocabulary bank, not a module.
  */
 const CALIBRATION_PROBE_MODULE: Record<string, ModuleId> = {
-  C2: 'P1_VD',
   C3: 'P3_HVS',
   C4: 'P1_VM',
   C5: 'P2_RDI',
 };
 
-/** Neutral threshold for calibration items; never a real APE threshold. */
-const PROBE_THRESHOLD_MS = 2400;
+/**
+ * Response window for a calibration pass. Mirrors the probe profile's pressure
+ * so the synthetic C1/C2 plans and the module-backed C3-C5 plans tighten by the
+ * same amount on the timed pass. Not a real APE threshold: these values are
+ * fixed probe constants because a candidate has no PCP yet.
+ */
+const CALIBRATION_PRESSURE: Record<'untimed' | 'timed', { thresholdMs: number }> = {
+  untimed: { thresholdMs: 2400 },
+  timed: { thresholdMs: 1440 },
+};
+
+/**
+ * A synthetic plan for the vectors served from their own banks. C1 and C2 have
+ * no drill module, so there is no descriptor to build a real SessionPlan from.
+ * Nothing is persisted against it and nothing scored on it reaches a metric, a
+ * threshold, or a rank; it is a carrier for the items.
+ */
+function probePlan(
+  vector: string,
+  passType: 'untimed' | 'timed',
+  thresholdMs: number,
+  items: unknown[],
+): SessionPlan {
+  return {
+    session_id: `probe-${vector}-${passType}`,
+    module_id: `${vector}_CALIBRATION`,
+    phase: 1,
+    sublevel: 1,
+    item_count: items.length,
+    threshold_ms: thresholdMs,
+    speed_multiplier: 1,
+    params: { flash_duration_ms: null, display_ms: null, swap_interval_ms: null, wpm: null },
+    items,
+  } as unknown as SessionPlan;
+}
 
 /**
  * Battery item source for a fresh, uncalibrated candidate.
@@ -164,39 +197,31 @@ async function handleCalibrationProbe(req: Request, res: Response): Promise<void
     throw new HttpError(400, 'vector must be C1|C2|C3|C4|C5');
   }
   const passType = req.query.pass_type === 'timed' ? 'timed' : 'untimed';
+  const thresholdMs = Math.round(CALIBRATION_PRESSURE[passType].thresholdMs);
 
-  if (vector === 'C1') {
-    // The real word bank. Guarded: a non-vocabulary payload 500s here rather
-    // than reaching a candidate screen.
-    const items = buildC1Items(id, passType, PROBE_THRESHOLD_MS);
-    assertVocabularyItems(items, 'GET /calibration/probe?vector=C1');
-    res.json({
-      plan: {
-        session_id: `probe-${vector}-${passType}`,
-        module_id: 'C1_CALIBRATION',
-        phase: 1,
-        sublevel: 1,
-        item_count: items.length,
-        threshold_ms: PROBE_THRESHOLD_MS,
-        speed_multiplier: 1,
-        params: {
-          flash_duration_ms: null,
-          display_ms: null,
-          swap_interval_ms: null,
-          wpm: null,
-        },
-        items,
-      } as unknown as SessionPlan,
-    });
+  // C1 and C2 are served from their own authored banks rather than from a drill
+  // module, because no module measures either one: the syntax bank had no item
+  // constructor at all, and the vocabulary bank has no module. Both are guarded
+  // at the boundary, so a payload that is not what it claims to be 500s here
+  // instead of reaching a candidate screen.
+  if (vector === 'C1' || vector === 'C2') {
+    const items =
+      vector === 'C1'
+        ? buildC1Items(id, passType, thresholdMs)
+        : buildC2Items(id, thresholdMs);
+    if (vector === 'C1') assertVocabularyItems(items, 'GET /calibration/probe?vector=C1');
+    else assertSyntaxItems(items, 'GET /calibration/probe?vector=C2');
+    res.json({ plan: probePlan(vector, passType, thresholdMs, items) });
     return;
   }
 
-  // C2-C5 keep their existing module-backed content for now; the audit found
-  // C2 mis-served and C3/C5 not using their authored battery content, which is
-  // tracked separately rather than rewritten blind. The mapping is server-owned
-  // from here on, so those can move without another client change.
+  // C3-C5 keep their module-backed content for now; the audit found C3/C5 not
+  // using their authored battery content, which is tracked separately rather than
+  // rewritten blind. The mapping is server-owned from here on, so those move
+  // without another client change. The pass type now reaches the probe profile,
+  // so the timed pass is genuinely faster and tighter than the untimed one.
   const moduleId = CALIBRATION_PROBE_MODULE[vector]!;
-  const { plan } = await planFor(id, moduleId, { gated: false });
+  const { plan } = await planFor(id, moduleId, { gated: false, passType });
   res.json({ plan });
 }
 
@@ -222,6 +247,11 @@ function calibrationBattery() {
         name: 'SYNTAX CEILING',
         method: 'progressive construction until first structural failure',
         levels: SYNTAX_LEVELS,
+        // The pass is one authored construction per level. Previously this entry
+        // advertised the full 48-task bank while the probe served 12 unrelated
+        // word-choice pairs, so the description and the measurement disagreed.
+        items_per_level: C2_ITEMS_PER_LEVEL,
+        item_count: SYNTAX_LEVELS.length * C2_ITEMS_PER_LEVEL,
         tasks: SYNTAX_TASKS,
       },
       C3: {
