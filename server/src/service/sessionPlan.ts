@@ -11,7 +11,7 @@ import {
   getWindow,
   sessionSummaries,
 } from '../db/repo.js';
-import type { CandidateId, ModuleId, Pcp, VocabularyBand } from '../core/types.js';
+import type { CandidateId, ModuleId, Pcp, RollingWindow, VocabularyBand } from '../core/types.js';
 import { emptyWindow } from '../db/repo.js';
 
 /**
@@ -53,7 +53,7 @@ export interface PlanResult {
  * the engine can locate the point where performance degrades. These are fixed
  * probe constants, never candidate-derived, because a candidate has no PCP yet.
  */
-const CALIBRATION_PRESSURE: Record<PassType, { wpm_ceiling: number; threshold_factor: number }> = {
+export const CALIBRATION_PRESSURE: Record<PassType, { wpm_ceiling: number; threshold_factor: number }> = {
   untimed: { wpm_ceiling: 200, threshold_factor: 1 },
   timed: { wpm_ceiling: 320, threshold_factor: 0.6 },
 };
@@ -68,7 +68,7 @@ export type PassType = 'untimed' | 'timed';
  * The seed varies with `passType` so the two passes are genuinely different
  * measurements. Everything else stays neutral.
  */
-function probePcp(candidateId: CandidateId, passType: PassType = 'untimed'): Pcp {
+export function probePcp(candidateId: CandidateId, passType: PassType = 'untimed'): Pcp {
   const pressure = CALIBRATION_PRESSURE[passType];
   return {
     candidate_id: candidateId,
@@ -90,6 +90,25 @@ function probePcp(candidateId: CandidateId, passType: PassType = 'untimed'): Pcp
     vectors: [],
     locked: false,
   };
+}
+
+/**
+ * The response window a pass is actually built from.
+ *
+ * A calibration pass takes its window from the probe profile rather than from a
+ * rolling window. buildSession reads `window.current_threshold_ms`, and a
+ * candidate who has never trained carries the INITIAL_THRESHOLD default — which
+ * is also the probe's *untimed* value. So the timed pass's 0.6 factor was
+ * computed and then discarded, and C3 through C5 served identical configuration
+ * on both passes. C4 and C5 measure a timed-versus-untimed contrast, so identical
+ * plans meant the contrast was measuring nothing at all.
+ *
+ * A candidate's live windows are deliberately not consulted for a probe: those
+ * encode the track the new baseline is meant to replace, for the same reason the
+ * probe does not reuse their PCP.
+ */
+export function windowForPass(window: RollingWindow, pcp: Pcp, gated: boolean): RollingWindow {
+  return gated ? window : { ...window, current_threshold_ms: pcp.phase_1_entry_difficulty_seed.latency_threshold_ms };
 }
 
 export async function planFor(
@@ -118,6 +137,10 @@ export async function planFor(
 
   const windows = await allWindows(candidateId);
   const window = windows[moduleId] ?? (await getWindow(candidateId, moduleId)) ?? emptyWindow();
+  // A calibration pass takes its response window from the probe profile, not
+  // from a rolling window — see windowForPass for why that distinction decides
+  // whether the timed pass is a real measurement.
+  const effectiveWindow = windowForPass(window, pcp, options.gated === true);
   const locks = await activeLocks(candidateId);
   const sessionIndex = (await sessionSummaries(candidateId, moduleId, 50)).length + 1;
 
@@ -135,7 +158,7 @@ export async function planFor(
   const plan = buildSession(moduleId, {
     candidate_id: candidateId,
     pcp,
-    window,
+    window: effectiveWindow,
     locks,
     session_index: sessionIndex,
     delayed_scene: delayed,
