@@ -13,7 +13,7 @@
  * module; there is exactly one routine and the server decides all of it.
  */
 import { ALL_MODULE_IDS, BASE_BLOCK_MINUTES, MODULES, PHASE_UNLOCK_RANK, rankAtLeast } from '../core/modules.js';
-import { emptyWindow, allWindows, activeLocks, currentRank, getPcp, sessionSummaries } from '../db/repo.js';
+import { emptyWindow, allWindows, activeLocks, currentRank } from '../db/repo.js';
 import { requirePcp } from './calibrationService.js';
 import { HttpError } from './httpError.js';
 import type { BlockId, CandidateId, ModuleId, Pcp, Rank } from '../core/types.js';
@@ -87,12 +87,11 @@ function chooseForBlock(
 function reasonFor(
   moduleId: ModuleId,
   locks: { module_id: ModuleId; remediation_active: boolean }[],
-  chosen: ModuleId,
 ): string {
   if (locks.some((l) => l.module_id === moduleId && l.remediation_active)) {
     return `open Structural Lock on ${moduleId}`;
   }
-  return moduleId === chosen ? `weakness-first selection among ${MODULES[moduleId].block} candidates` : '';
+  return `weakness-first selection among ${MODULES[moduleId].block} candidates`;
 }
 
 /**
@@ -144,7 +143,7 @@ export async function buildDailyRoutine(candidateId: CandidateId, date: string):
       block: b.block,
       block_title: b.title,
       module_id: chosen,
-      selection_reason: reasonFor(chosen, locks, chosen),
+      selection_reason: reasonFor(chosen, locks),
       lock_driven: locks.some((l) => l.module_id === chosen && l.remediation_active),
     });
   }
@@ -167,10 +166,3 @@ export function rejectModuleParam(value: unknown): void {
       'Naming a module is no longer accepted here, as a query parameter or in the body (Section 16.1).',
   );
 }
-
-/** How many sessions a candidate has run for a module, used to index plans. */
-export async function sessionIndexFor(candidateId: CandidateId, moduleId: ModuleId): Promise<number> {
-  return (await sessionSummaries(candidateId, moduleId, 50)).length + 1;
-}
-
-export { getPcp };
