@@ -56,18 +56,41 @@ for (const [email, password] of [
   console.log(`    calibrated=${String(p.calibrated)} rank=${JSON.stringify(p.rank)} entry_rank=${JSON.stringify(p.entry_rank)}`);
   console.log(`    sessions=${Array.isArray(body.sessions) ? body.sessions.length : '?'} modules=${Array.isArray(body.modules) ? body.modules.length : '?'}`);
 
-  // Every route that can serve a drill item must refuse without a PCP. If any
-  // returns 200 the gate has a hole, regardless of what the UI renders.
+  // Section 16.1: naming a module is now refused outright, and that refusal
+  // happens before the PCP gate, so these return 400 rather than 423. Both
+  // outcomes are correct; what would be a hole is a 200 with a plan.
   for (const mod of MODULES) {
     const r = await fetch(`${base}/api/session/next?module=${mod}`, { headers: { cookie } });
-    const text = await r.text();
-    if (r.status !== 423) {
-      console.log(`  FAIL /api/session/next?module=${mod} -> ${r.status} ${text.slice(0, 120)}`);
+    if (r.status === 200) {
+      const text = await r.text();
+      console.log(`  FAIL /api/session/next?module=${mod} -> 200 (selection still honoured) ${text.slice(0, 120)}`);
     }
   }
-  const probe = await fetch(`${base}/api/session/next?module=${MODULES[0]}`, { headers: { cookie } });
-  const probeBody = await probe.text();
-  console.log(`  /api/session/next   ${probe.status}  ${probeBody.slice(0, 80)}`);
+  console.log(`  ?module=<any of ${MODULES.length}>   refused (no 200)`);
+
+  // The gate itself must still hold on the routes a legitimate client uses.
+  // An uncalibrated candidate must not be able to reach a plan, a routine, or a
+  // submit by any legitimate path.
+  for (const path of ['/api/routine', '/api/session/next?step=1&m=1', '/api/session/next?step=2&m=1']) {
+    const r = await fetch(`${base}${path}`, { headers: { cookie } });
+    if (r.status !== 423) {
+      console.log(`  FAIL ${path} -> ${r.status} ${(await r.text()).slice(0, 120)} (expected 423)`);
+    } else {
+      console.log(`  ok  ${path}  423`);
+    }
+  }
+
+  const post = await fetch(`${base}/api/session`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    // No module_id, and an empty attempts[] so this cannot grade or write.
+    body: JSON.stringify({ step: 1, m: 1, attempts: [] }),
+  });
+  if (post.status === 200) {
+    console.log(`  FAIL POST /api/session -> 200 for an uncalibrated candidate`);
+  } else {
+    console.log(`  ok  POST /api/session  ${post.status}`);
+  }
 
   // The calibration battery must still be reachable — it is what produces the PCP.
   const batt = await fetch(`${base}/api/calibration/battery`, { headers: { cookie } });
