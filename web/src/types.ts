@@ -732,3 +732,25 @@ export interface StatsBundle {
   delayed_recall_accuracy_pct: number;
   standard_accuracy_pct: number;
 }
+
+/**
+ * Section 16.3 — the one daily routine. The candidate sees the order and the
+ * block titles; `selection_reason` exists for transparency in the teacher
+ * surface and is deliberately not surfaced as a choice.
+ */
+export interface RoutineStep {
+  order: number;
+  block: string;
+  block_title: string;
+  module_id: ModuleId;
+  selection_reason: string;
+  lock_driven: boolean;
+}
+
+export interface DailyRoutine {
+  candidate_id: string;
+  date: string;
+  rank: Rank;
+  steps: RoutineStep[];
+  empty_blocks: { block: string; reason: string }[];
+}

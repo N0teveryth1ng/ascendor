@@ -9,7 +9,7 @@ interface ForgeState {
   dashboard: Dashboard | null;
   profile: CandidateProfile | null;
   lastResult: SessionResult | null;
-  pendingModule: string;
+  pendingStep: number;
   view: View;
   booting: boolean;
   signupAllowed: boolean;
@@ -20,7 +20,7 @@ interface ForgeState {
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   go: (view: View) => void;
-  startModule: (moduleId: string) => void;
+  startStep: (step: number) => void;
   refreshDashboard: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   setResult: (r: SessionResult | null) => void;
@@ -39,7 +39,7 @@ export const useForge = create<ForgeState>((set, get) => ({
   dashboard: null,
   profile: null,
   lastResult: null,
-  pendingModule: 'P1_VD',
+  pendingStep: 1,
   view: 'home',
   booting: true,
   signupAllowed: true,
@@ -89,7 +89,7 @@ export const useForge = create<ForgeState>((set, get) => ({
 
   go: (view) => set({ view, fault: null }),
 
-  startModule: (pendingModule) => set({ pendingModule, view: 'session', fault: null }),
+  startStep: (pendingStep) => set({ pendingStep, view: 'session', fault: null }),
 
   refreshDashboard: async () => {
     const user = get().user;

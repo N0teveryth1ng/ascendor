@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BarChart3 } from 'lucide-react';
 import { useForge } from '@/store/useForge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StreakHeatmap } from '@/components/Heatmap';
@@ -29,6 +30,46 @@ export function Progress() {
   const strongest = [...dashboard.modules].filter((m) => m.attempts > 0).sort((a, b) => b.accuracy_pct - a.accuracy_pct)[0];
   const weakest = [...dashboard.modules].filter((m) => m.attempts > 0).sort((a, b) => a.accuracy_pct - b.accuracy_pct)[0];
 
+  // A first-time account has no attempts. Rendering a zeroed heatmap, a flat
+  // trend line and an all-empty module breakdown would assert "30 days of
+  // training, all of it at zero" — which is a different and false claim than
+  // "this has never been used". Charts only appear once something is plotted.
+  const hasAttempts = dashboard.modules.some((m) => m.attempts > 0);
+  const hasTrend = dashboard.trends.length > 0;
+  const hasHeat = dashboard.heatmap.longest > 0 || dashboard.heatmap.current > 0;
+
+  if (!hasAttempts) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-4 p-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Your progress</h1>
+          <p className="text-sm text-muted-foreground">Everything the app is tracking, in plain terms.</p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
+            <BarChart3 className="h-6 w-6 text-muted-foreground" />
+            <p className="text-sm font-medium">No progress to show yet</p>
+            <p className="max-w-sm text-xs text-muted-foreground">
+              Once you finish your first routine, your streak, trend and per-area accuracy will appear
+              here.
+            </p>
+          </CardContent>
+        </Card>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">Current level</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-lg font-semibold">{rankLabel(dashboard.rank.current)}</p>
+              <CardDescription className="mt-1 text-xs">Set by your calibration</CardDescription>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-6">
       <div>
@@ -36,8 +77,8 @@ export function Progress() {
         <p className="text-sm text-muted-foreground">Everything the app is tracking, in plain terms.</p>
       </div>
 
-      <StreakHeatmap data={dashboard.heatmap} />
-      <MetricTrendChart trends={dashboard.trends} />
+      {hasHeat && <StreakHeatmap data={dashboard.heatmap} />}
+      {hasTrend && <MetricTrendChart trends={dashboard.trends} />}
       <ModuleBreakdownChart modules={dashboard.modules} />
 
       {stats && (

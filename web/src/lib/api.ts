@@ -2,6 +2,7 @@ import type {
   Attempt,
   CalibrationStatus,
   CandidateProfile,
+  DailyRoutine,
   Dashboard,
   DrillItem,
   ErrorEvent,
@@ -9,6 +10,7 @@ import type {
   ModuleId,
   Onboarding,
   PracticeModule,
+  RoutineStep,
   SessionPlan,
   SessionResult,
   StatsBundle,
@@ -94,14 +96,22 @@ export const api = {
       sessions: unknown[];
       schedule: unknown;
     }>('/profile'),
-  nextSession: (module: string) => request<{ plan: SessionPlan }>(`/session/next?module=${module}`),
+  /**
+   * Section 16.1: the client names a *position* in the server-decided routine,
+   * never a module. `module_id` is gone from submit for the same reason — the
+   * server reads the module off the routine step it is grading.
+   */
+  routine: () => request<{ routine: DailyRoutine; schedule: unknown }>('/routine'),
+  nextSession: (step: number) =>
+    request<{ step: RoutineStep; routine: DailyRoutine; plan: SessionPlan }>(
+      `/session/next?step=${step}`,
+    ),
   submitSession: (payload: {
     session_id: string;
-    module_id: string;
+    step: number;
     attempts: Attempt[];
     started_at: string;
     ended_at: string;
-    block_id?: string;
     item_payloads?: unknown[];
     delayed_recall_of?: string | null;
   }) => request<{ result: SessionResult; profile: CandidateProfile }>('/session', { method: 'POST', body: JSON.stringify(payload) }),

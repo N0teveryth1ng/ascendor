@@ -23,7 +23,7 @@ interface ItemFeedback {
 }
 
 export function SessionRunner() {
-  const { user, pendingModule, go, setResult, setFault, refreshDashboard } = useForge();
+  const { user, pendingStep, go, setResult, setFault, refreshDashboard } = useForge();
   const [plan, setPlan] = useState<SessionPlan | null>(null);
   const [index, setIndex] = useState(0);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
@@ -45,7 +45,7 @@ export function SessionRunner() {
   const finished = !!plan && index >= plan.items.length;
 
   useEffect(() => {
-    if (!user || !pendingModule) return;
+    if (!user || !pendingStep) return;
     let cancelled = false;
     setPlan(null);
     setAttempts([]);
@@ -54,7 +54,7 @@ export function SessionRunner() {
     setResult(null);
     setLocalResult(null);
     api
-      .nextSession(pendingModule)
+      .nextSession(pendingStep)
       .then(({ plan: p }) => {
         if (cancelled) return;
         setPlan(p);
@@ -64,7 +64,7 @@ export function SessionRunner() {
     return () => {
       cancelled = true;
     };
-  }, [user, pendingModule, setFault, setResult]);
+  }, [user, pendingStep, setFault, setResult]);
 
   const present = useCallback(
     async (next: DrillItem, activePlan: SessionPlan) => {
@@ -174,7 +174,7 @@ export function SessionRunner() {
     try {
       const res = await api.submitSession({
         session_id: plan.session_id,
-        module_id: plan.module_id,
+        step: pendingStep,
         attempts,
         started_at: new Date(Date.now() - (performance.now() - planLoadedAt.current)).toISOString(),
         ended_at: new Date().toISOString(),

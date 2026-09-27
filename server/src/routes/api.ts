@@ -29,6 +29,7 @@ import {
   sessionSummaries,
 } from '../db/repo.js';
 import { GateError, applyDailyTier, processSessionResult } from '../service/sessionService.js';
+import { buildDailyRoutine, rejectModuleParam } from '../service/dailyRoutine.js';
 import { buildArchiveRows, recordExerciseAttempts } from '../service/exerciseArchive.js';
 import { buildDailySchedule } from '../core/scheduler.js';
 import { evaluateRanks, MASTER_WINDOW_DAYS } from '../core/ranks.js';
@@ -274,14 +275,53 @@ api.post(
 
 /* ── Session lifecycle ────────────────────────────────────────────────────── */
 
+/**
+ * Section 16.3: today's routine, as an ordered list of steps. This is the only
+ * entry point to drill content — there is deliberately no "list modules" route
+ * and no per-module plan route, because either would be a way to choose.
+ */
+async function handleRoutine(req: Request, res: Response): Promise<void> {
+  const id = ownId(req);
+  await loadCandidate(id);
+  rejectModuleParam(req.query.module);
+
+  const routine = await buildDailyRoutine(id, todayUtc());
+  const schedule = await buildDailySchedule({
+    date: routine.date,
+    active_locks: await activeLocks(id),
+    forced_repeat_modules: routine.steps.filter((s) => s.lock_driven).map((s) => s.module_id),
+  });
+
+  res.json({ routine, schedule, pcp_summary: pcpSummary((await getPcp(id))!) });
+}
+
 async function handleSessionNext(req: Request, res: Response): Promise<void> {
   const id = ownId(req);
   await loadCandidate(id);
 
-  const moduleId = String(req.query.module ?? '') as ModuleId;
-  const { plan, recall_of_session, recall_payload } = await planFor(id, moduleId, { gated: true });
+  // Section 16.1: the client cannot choose a module. Reject rather than ignore,
+  // so a stale or hand-written client cannot believe it selected one.
+  rejectModuleParam(req.query.module);
+
+  const routine = await buildDailyRoutine(id, todayUtc());
+
+  // `?step=N` selects a position in the server-decided routine, never a module.
+  // Omitting it serves step 1, which is what "start today's routine" means.
+  const stepNo = Number(req.query.step ?? 1);
+  const step = routine.steps.find((s) => s.order === stepNo);
+  if (!step) {
+    throw new HttpError(
+      400,
+      `no routine step ${stepNo} — today's routine has ${routine.steps.length} step(s). ` +
+        'Modules are chosen by the server; a client cannot request one by name.',
+    );
+  }
+
+  const { plan, recall_of_session, recall_payload } = await planFor(id, step.module_id, { gated: true });
 
   res.json({
+    step,
+    routine,
     plan,
     recall_of_session,
     recall_payload,
@@ -305,8 +345,20 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
   await loadCandidate(id);
   await requirePcp(id);
 
-  const moduleId = String(req.body?.module_id ?? '') as ModuleId;
-  if (!ALL_MODULE_IDS.includes(moduleId)) throw new HttpError(400, 'unknown module');
+  const routine = await buildDailyRoutine(id, todayUtc());
+  const stepNo = Number(req.body?.step ?? 1);
+  const step = routine.steps.find((s) => s.order === stepNo);
+  if (!step) {
+    throw new HttpError(
+      400,
+      `no routine step ${stepNo} — today's routine has ${routine.steps.length} step(s). ` +
+        'Modules are chosen by the server; a client cannot request one by name.',
+    );
+  }
+  const moduleId = step.module_id;
+
+  const { plan, recall_of_session, recall_payload } = await planFor(id, moduleId, { gated: true });
+
   const attempts = Array.isArray(req.body?.attempts) ? (req.body.attempts as Attempt[]) : [];
   if (!attempts.length) throw new HttpError(400, 'attempts[] required');
 
@@ -327,7 +379,7 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
       attempts,
       started_at: String(req.body?.started_at ?? new Date().toISOString()),
       ended_at: String(req.body?.ended_at ?? new Date().toISOString()),
-      block_id: req.body?.block_id,
+      block_id: step.block,
       delayed_recall_of: req.body?.delayed_recall_of ?? null,
     },
     Array.isArray(req.body?.item_payloads) ? req.body.item_payloads : [],
@@ -340,7 +392,15 @@ async function handleSubmitSession(req: Request, res: Response): Promise<void> {
     buildArchiveRows({ userId: id, sessionId, moduleId, attempts, timestamp: new Date().toISOString(), itemPayloads }),
   );
 
-  res.json({ result, profile: await buildCandidateProfile(id) });
+  res.json({
+    result,
+    step,
+    routine,
+    profile: await buildCandidateProfile(id),
+    recall_of_session,
+    recall_payload,
+    plan,
+  });
 }
 
 /* ── Route table ────────────────────────────────────────────────────────────
@@ -364,6 +424,7 @@ const USER_ROUTES: Array<
   ['post', '/calibration/finalise', '/candidates/:id/calibration/finalise', handleFinalise],
   ['get', '/profile', '/candidates/:id/profile', handleProfile],
   ['get', '/schedule', '/candidates/:id/schedule', handleSchedule],
+  ['get', '/routine', '/candidates/:id/routine', handleRoutine],
   ['get', '/session/next', '/candidates/:id/session/next', handleSessionNext],
   ['post', '/session', '/candidates/:id/session', handleSubmitSession],
 ];
