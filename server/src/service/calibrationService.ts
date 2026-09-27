@@ -4,6 +4,7 @@ import { BAND_ORDER } from '../content/vocab.js';
 import { SYNTAX_LEVELS } from '../content/syntax.js';
 import { C1_ITEMS_PER_BAND } from '../content/calibrationC1.js';
 import { C2_ITEMS_PER_LEVEL } from '../content/calibrationC2.js';
+import { MAX_STREAM_WPM, MIN_STREAM_WPM } from '../content/index.js';
 import { HttpError } from './httpError.js';
 import {
   bootstrapCandidate,
@@ -132,6 +133,29 @@ function assertC2LevelAccuracy(levelAccuracy: unknown): void {
   }
 }
 
+/**
+ * C3 measures the highest delivery rate the candidate still comprehends, and
+ * that rate is the aural seed for the whole Phase 1 difficulty ladder. The
+ * engine clamps generated streams to [90, 420] WPM, so a pass reporting a rate
+ * outside that range cannot have come from the content pipeline. Accepting one
+ * anyway would seed the ladder from a number the engine could never produce.
+ */
+function assertC3Wpm(wpm: unknown): void {
+  if (wpm === undefined || wpm === null) {
+    throw new HttpError(400, 'C3 pass requires wpm');
+  }
+  if (typeof wpm !== 'number' || !Number.isFinite(wpm)) {
+    throw new HttpError(400, `C3 wpm must be a number, got ${JSON.stringify(wpm)}`);
+  }
+  if (wpm < MIN_STREAM_WPM || wpm > MAX_STREAM_WPM) {
+    throw new HttpError(
+      400,
+      `C3 wpm must be between ${MIN_STREAM_WPM} and ${MAX_STREAM_WPM}, got ${wpm}. ` +
+        'That is the range the engine generates streams in; a rate outside it did not come from the pipeline.',
+    );
+  }
+}
+
 export async function recordPass(
   candidateId: CandidateId,
   vector: string,
@@ -141,6 +165,7 @@ export async function recordPass(
   await ensureCandidate(candidateId);
   if (vector === 'C1') assertC1BandAccuracy(data.band_accuracy);
   if (vector === 'C2') assertC2LevelAccuracy(data.level_accuracy);
+  if (vector === 'C3') assertC3Wpm(data.wpm);
   await insertCalibrationPass({
     candidateId,
     vector,

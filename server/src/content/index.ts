@@ -418,10 +418,18 @@ function swapFor(window: RollingWindow): number {
   return Math.round(clampOf(timeBudget(1500, lastFactor(window)), 600, 3000));
 }
 
+/**
+ * Delivery-rate bounds for generated aural streams. The calibration write
+ * guard validates against these same constants, so a reported rate can never
+ * fall outside the range the generator is able to produce.
+ */
+export const MIN_STREAM_WPM = 90;
+export const MAX_STREAM_WPM = 420;
+
 function streamWpm(pcp: Pcp, window: RollingWindow): number {
   // A rate, not a duration: TIGHTEN must raise delivered WPM, never lower it.
   const seed = pcp.phase_1_entry_difficulty_seed.wpm_ceiling;
-  return Math.round(clampOf(deliveryRate(seed, lastFactor(window)), 90, 420));
+  return Math.round(clampOf(deliveryRate(seed, lastFactor(window)), MIN_STREAM_WPM, MAX_STREAM_WPM));
 }
 
 function anomalyWindowFor(window: RollingWindow): number {

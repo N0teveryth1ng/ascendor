@@ -147,12 +147,18 @@ export function itemView(item: DrillItem): ItemView {
       };
 
     case 'stream':
+      // Anomaly detection, not dictation. Every StreamItem carries the corrupted
+      // token, its index, and `corrected` — what it should have been — so the
+      // answer key is a single word. The prompt used to say "Type the stream as
+      // you hear it", which described a task the content does not contain: the
+      // candidate was asked to transcribe thirteen words and then graded by
+      // exact string equality against one of them, so every stream item failed
+      // and the aural baseline came out at zero for everyone.
       return {
         id: item.item_id,
-        prompt: 'Type the stream as you hear it.',
+        prompt: 'One word in the stream is wrong. Type the word it should have been.',
         body: item.tokens.join(JOIN),
-        // The token at the anomaly index is the one that must be corrected.
-        detail: item.tokens[item.anomaly_index],
+        detail: `Spoken as: "${item.tokens[item.anomaly_index] ?? ''}"`,
         speech: { text: item.tokens.join(' '), wpm: rateHint(item.wpm) },
         durationMs: item.anomaly_window_ms || item.threshold_ms,
         timed: true,

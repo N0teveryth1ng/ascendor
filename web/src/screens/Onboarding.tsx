@@ -488,8 +488,11 @@ function buildPass(
     pass.level_accuracy = byLevel;
   }
   if (vector === 'C3') {
-    const withWpm = items.find((i) => 'wpm' in i);
-    pass.wpm = withWpm && 'wpm' in withWpm ? withWpm.wpm : 0;
+    // Take the rate off the served items. The old fallback wrote 0 when no item
+    // carried a wpm, which is not "unknown", it is silence: it would enter
+    // `accuracy_by_wpm` as a real measurement at 0 wpm. Absent stays absent.
+    const withWpm = items.find((i) => 'wpm' in i && typeof i.wpm === 'number' && i.wpm > 0);
+    pass.wpm = withWpm && 'wpm' in withWpm ? withWpm.wpm : undefined;
   }
   if (vector === 'C4') {
     pass.clarity = Math.round((mic?.peak() ?? 0) * 100);
