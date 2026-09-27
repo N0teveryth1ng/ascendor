@@ -160,7 +160,7 @@ export function Onboarding() {
   const record = useCallback(async () => {
     if (!user) return;
     setSaving(true);
-    const pass = buildPass(vector, passType, attempts, items, mic, micPeaks);
+    const pass = buildPass(vector, passType, attempts, items, micPeaks);
     const nextLog = [...log, pass];
     setLog(nextLog);
     try {
@@ -438,7 +438,6 @@ function buildPass(
   passType: PassType,
   attempts: Attempt[],
   items: DrillItem[],
-  mic: MicCapture | null,
   micPeaks: Record<string, number> = {},
 ): CalibrationPass {
   const total = attempts.length;
@@ -509,13 +508,18 @@ function buildPass(
     pass.wpm = withWpm && 'wpm' in withWpm ? withWpm.wpm : undefined;
   }
   if (vector === 'C4') {
-    pass.clarity = Math.round((mic?.peak() ?? 0) * 100);
+    // The overall clarity is the loudest moment of the whole pass, so it is
+    // derived from the per-item measurements rather than read off the meter.
+    // The meter is reset before each recording now, so a bare `mic.peak()` here
+    // would report the final item alone.
+    const measured = Object.values(micPeaks).filter((p) => typeof p === 'number' && p > 0);
+    pass.clarity = measured.length ? Math.round(Math.min(1, Math.max(...measured)) * 100) : 0;
     // Per-phoneme clarity, grouped by the class each burst item targets. This
     // was a hardcoded `{}`: the server derives `flagged_weak_vectors` from these
     // values and needs at least two classes, so C4 could never flag anything and
     // the vector's whole purpose was inert. Values come from the per-item mic
-    // snapshots taken during the pass, not from the session total repeated
-    // once per item.
+    // snapshots taken during the pass, each from its own measurement window, not
+    // from the session total repeated once per item.
     const totalByClass: Record<string, number> = {};
     const sumByClass: Record<string, number> = {};
     for (const a of attempts) {
