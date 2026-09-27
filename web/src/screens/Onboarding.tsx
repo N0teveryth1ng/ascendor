@@ -522,9 +522,8 @@ function buildPass(
     pass.clarity_by_class = byClass;
     pass.phoneme_classes = byClass;
   }
-  if (vector === 'C5') {
-    const typos = attempts.filter((a) => a.error_code === 'TYPO_DETECTED').length;
-    pass.typo_vulnerability_index = total ? Number((typos / total).toFixed(4)) : 0;
-  }
+  /* C5's typo vulnerability is derived server-side from the untimed-versus-timed
+     accuracy contrast. This used to send a client-side typo fraction that the
+     server never read, which implied the client's number mattered. */
   return pass;
 }

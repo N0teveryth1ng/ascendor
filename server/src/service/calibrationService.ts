@@ -176,6 +176,14 @@ export async function recordPass(
   if (!Number.isInteger(correct) || correct < 0 || correct > total) {
     throw new HttpError(400, `A calibration pass reporting ${correct} correct out of ${total} items is not a possible result.`);
   }
+  if (!Number.isFinite(data.mean_latency_ms) || data.mean_latency_ms < MIN_PASS_LATENCY_MS || data.mean_latency_ms > MAX_PASS_LATENCY_MS) {
+    throw new HttpError(
+      400,
+      `A calibration pass must report a measured mean latency between ${MIN_PASS_LATENCY_MS} and ` +
+        `${MAX_PASS_LATENCY_MS}ms, got ${data.mean_latency_ms}. A pass with no timing is not a fast pass: ` +
+        'this value seeds the reflex baseline.',
+    );
+  }
   // The accuracy column and the item counts are written together, so a payload
   // whose two halves disagree is corrupt rather than merely imprecise.
   const accuracyPct = Math.round((correct / total) * 10000) / 100;
@@ -227,6 +235,18 @@ export interface FinaliseOptions {
  * observed performance supports — so refuse instead of guessing which half is
  * right.
  */
+/**
+ * Response latency bounds for a calibration pass. The lower bound is not a
+ * quality threshold: a reported 0 is not "infinitely fast", it is an absent
+ * measurement, and the client produces exactly that when a pass has no attempts.
+ * C5's timed mean latency becomes `baseline_reflex_latency_ms`, which seeds the
+ * Phase 1 latency threshold as `baseline * 1.15 * (1 + TVI/2)` clamped to
+ * [900, 4000] — so a 0 silently becomes 900, the hardest setting the system can
+ * produce, derived from nothing.
+ */
+const MIN_PASS_LATENCY_MS = 1;
+const MAX_PASS_LATENCY_MS = 120_000;
+
 export function assertPassIntegrity(passes: RawPass[]): void {
   for (const p of passes) {
     if (!Number.isInteger(p.correct) || !Number.isInteger(p.total) || p.total <= 0) {
@@ -235,8 +255,17 @@ export function assertPassIntegrity(passes: RawPass[]): void {
     if (p.correct < 0 || p.correct > p.total) {
       throw new HttpError(400, `${p.vector}/${p.pass_type} claims ${p.correct} correct out of ${p.total}.`);
     }
-    if (!Number.isFinite(p.mean_latency_ms) || p.mean_latency_ms < 0) {
-      throw new HttpError(400, `${p.vector}/${p.pass_type} has an invalid mean latency of ${p.mean_latency_ms}ms.`);
+    if (
+      !Number.isFinite(p.mean_latency_ms) ||
+      p.mean_latency_ms < MIN_PASS_LATENCY_MS ||
+      p.mean_latency_ms > MAX_PASS_LATENCY_MS
+    ) {
+      throw new HttpError(
+        400,
+        `${p.vector}/${p.pass_type} has an implausible mean latency of ${p.mean_latency_ms}ms. ` +
+          'A pass with no timing is not a fast pass: this value seeds the reflex baseline, ' +
+          'and zero would become the tightest response window the system can generate.',
+      );
     }
     const derived = Math.round((p.correct / p.total) * 10000) / 100;
     if (typeof p.accuracy_pct !== 'number' || !Number.isFinite(p.accuracy_pct)) {

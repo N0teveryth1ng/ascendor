@@ -111,5 +111,5 @@ test('a pass whose accuracy contradicts its own item counts is refused', () => {
   assert.throws(() => assertPassIntegrity([{ ...honest, correct: 30 }]), /claims 30 correct/);
   assert.throws(() => assertPassIntegrity([{ ...honest, total: 0 }]), /invalid item counts/);
   assert.throws(() => assertPassIntegrity([{ ...honest, accuracy_pct: undefined }]), /missing its stored accuracy/);
-  assert.throws(() => assertPassIntegrity([{ ...honest, mean_latency_ms: -1 }]), /invalid mean latency/);
+  assert.throws(() => assertPassIntegrity([{ ...honest, mean_latency_ms: -1 }]), /implausible mean latency/);
 });
